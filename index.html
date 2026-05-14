@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NoAdsPhotos — Image editor that respects your data</title>
+  <meta name="description" content="A privacy-first image editor and batch processor that runs entirely in your browser. No uploads, no tracking.">
+  <meta name="theme-color" content="#0f1410">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/img/logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1 data-i18n="brandName">NoAdsPhotos</h1>
+    <div class="spacer"></div>
+    <div class="controls">
+      <button id="lang-toggle" type="button" data-i18n="language" data-i18n-attr="aria-label" aria-label="Language">🌐</button>
+      <button id="settings-toggle" type="button" data-i18n="settings" data-i18n-attr="aria-label" aria-label="Settings">⚙</button>
+      <a class="btn-tip" href="https://ko-fi.com/noadsdude" target="_blank" rel="noopener" data-i18n="tip">Tip</a>
+    </div>
+  </header>
+
+  <main id="workspace">
+    <section id="queue-view" class="view"></section>
+    <section id="editor-view" class="view" hidden></section>
+  </main>
+
+  <footer>
+    <button id="privacy-toggle" type="button" data-i18n="privacy">Privacy</button>
+    <span aria-hidden="true">·</span>
+    <a href="https://github.com/Dan512/noadsphotos" target="_blank" rel="noopener" data-i18n="source">Source</a>
+    <span aria-hidden="true">·</span>
+    <a href="https://ko-fi.com/noadsdude" target="_blank" rel="noopener" data-i18n="tipFooter">Tip</a>
+  </footer>
+
+  <!-- Import map: resolves bare specifiers used by vendored libraries.
+       `onnxruntime-web` (CPU execution provider) and `onnxruntime-web/webgpu`
+       (GPU execution provider) are imported by `js/vendor/bgremove/index.mjs`
+       (the @imgly background-removal bundle); without this map the dynamic
+       `import("onnxruntime-web")` / `import("onnxruntime-web/webgpu")` calls
+       would fail in a vanilla browser.  All vendored libs are served from
+       this origin — no third-party CDN. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "onnxruntime-web":        "/js/vendor/onnxruntime-web/ort.bundle.min.mjs",
+      "onnxruntime-web/webgpu": "/js/vendor/onnxruntime-web/ort.webgpu.bundle.min.mjs"
+    }
+  }
+  </script>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

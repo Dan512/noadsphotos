@@ -1,0 +1,242 @@
+// js/tools/selectTool.js — the default "Select" tool side panel.
+//
+// When state.ui.activeTool === 'select' (and we're in the editor view with an
+// active image), this module fills the Tool options details body with rotate
+// and flip controls. When the tool changes to something else, it clears the
+// panel so the next tool can own it.
+//
+// The actual transform mutations go through ops/transforms.js so logic is
+// shared with the export pipeline.
+import { getState, subscribe, update } from '../state.js';
+import { applyRotate, applyFlip } from '../ops/transforms.js';
+import { setToolPanel, clearToolPanel, getToolPanelBody } from '../editor.js';
+import { withTransformsHistory } from '../historyOps.js';
+import { recordOp } from '../history.js';
+import { t } from '../i18n.js';
+
+let active = false;
+let els = null; // { minus90, plus90, slider, readout, flipH, flipV }
+
+export function initSelectTool() {
+  subscribe(handleStateChange);
+  // Run once on init in case state is already 'select' (default) and editor
+  // is already up.
+  handleStateChange();
+}
+
+function handleStateChange() {
+  const s = getState();
+  const wantActive = s.ui.view === 'editor' && s.ui.activeTool === 'select';
+  if (wantActive && !active) activate();
+  else if (!wantActive && active) deactivate();
+  if (active) syncFromState();
+}
+
+function activate() {
+  const body = getToolPanelBody();
+  if (!body) return; // editor not mounted yet — handleStateChange retries on next sub fire
+  active = true;
+  renderPanel();
+}
+
+function deactivate() {
+  active = false;
+  els = null;
+  clearToolPanel({ owner: 'select' });
+}
+
+function renderPanel() {
+  const root = document.createElement('div');
+  root.className = 'select-tool-panel';
+
+  const heading = document.createElement('h3');
+  heading.textContent = t('selectTransform');
+  heading.className = 'panel-heading';
+  root.appendChild(heading);
+
+  // Rotate row -----------------------------------------------------------
+  const rotateGroup = document.createElement('div');
+  rotateGroup.className = 'rotate-group';
+
+  const minus90 = document.createElement('button');
+  minus90.type = 'button';
+  minus90.className = 'rotate-minus-90';
+  minus90.setAttribute('aria-label', t('selectRotateMinus90'));
+  minus90.title = t('selectRotateMinus90Short');
+  minus90.textContent = t('selectRotateMinus90Label');
+  rotateGroup.appendChild(minus90);
+
+  const plus90 = document.createElement('button');
+  plus90.type = 'button';
+  plus90.className = 'rotate-plus-90';
+  plus90.setAttribute('aria-label', t('selectRotatePlus90'));
+  plus90.title = t('selectRotatePlus90Short');
+  plus90.textContent = t('selectRotatePlus90Label');
+  rotateGroup.appendChild(plus90);
+
+  root.appendChild(rotateGroup);
+
+  const slider = document.createElement('input');
+  slider.type = 'range';
+  slider.min = '0';
+  slider.max = '360';
+  slider.step = '1';
+  slider.className = 'rotate-slider';
+  slider.setAttribute('aria-label', t('selectRotateSliderAria'));
+  root.appendChild(slider);
+
+  const readout = document.createElement('div');
+  readout.className = 'rotate-readout';
+  readout.setAttribute('aria-live', 'polite');
+  readout.textContent = t('selectRotateReadout', { deg: 0 });
+  root.appendChild(readout);
+
+  // Flip row -------------------------------------------------------------
+  const flipHeading = document.createElement('h3');
+  flipHeading.textContent = t('selectFlip');
+  flipHeading.className = 'panel-heading';
+  root.appendChild(flipHeading);
+
+  const flipGroup = document.createElement('div');
+  flipGroup.className = 'flip-group';
+
+  const flipH = document.createElement('button');
+  flipH.type = 'button';
+  flipH.className = 'flip-h-btn';
+  flipH.setAttribute('aria-label', t('selectFlipH'));
+  flipH.title = t('selectFlipH');
+  flipH.textContent = t('selectFlipH');
+  flipGroup.appendChild(flipH);
+
+  const flipV = document.createElement('button');
+  flipV.type = 'button';
+  flipV.className = 'flip-v-btn';
+  flipV.setAttribute('aria-label', t('selectFlipV'));
+  flipV.title = t('selectFlipV');
+  flipV.textContent = t('selectFlipV');
+  flipGroup.appendChild(flipV);
+
+  root.appendChild(flipGroup);
+
+  setToolPanel(root, { owner: 'select' });
+  els = { minus90, plus90, slider, readout, flipH, flipV };
+
+  // Listeners -----------------------------------------------------------
+  minus90.addEventListener('click', () => {
+    const img = getActiveImage();
+    if (!img) return;
+    withTransformsHistory('Rotate -90°', img.id, state => {
+      const t = state.images[img.id];
+      if (t) applyRotate(t, t.transforms.rotate - 90);
+    });
+  });
+  plus90.addEventListener('click', () => {
+    const img = getActiveImage();
+    if (!img) return;
+    withTransformsHistory('Rotate +90°', img.id, state => {
+      const t = state.images[img.id];
+      if (t) applyRotate(t, t.transforms.rotate + 90);
+    });
+  });
+  // The rotate slider fires `input` continuously while dragging. To record
+  // one history entry per drag session we snapshot on focus, apply live,
+  // then record on change/blur.
+  slider.addEventListener('focus', captureRotateBefore);
+  slider.addEventListener('input', () => {
+    const img = getActiveImage();
+    if (!img) return;
+    ensureRotateCaptured(img.id);
+    const deg = Number(slider.value);
+    update(s => { applyRotate(s.images[img.id], deg); });
+  });
+  slider.addEventListener('change', () => commitRotateHistory('Rotate'));
+  slider.addEventListener('blur',   () => commitRotateHistory('Rotate'));
+
+  flipH.addEventListener('click', () => {
+    const img = getActiveImage();
+    if (!img) return;
+    withTransformsHistory('Flip horizontal', img.id, state => {
+      applyFlip(state.images[img.id], 'h');
+    });
+  });
+  flipV.addEventListener('click', () => {
+    const img = getActiveImage();
+    if (!img) return;
+    withTransformsHistory('Flip vertical', img.id, state => {
+      applyFlip(state.images[img.id], 'v');
+    });
+  });
+
+  syncFromState();
+}
+
+function getActiveImage() {
+  const s = getState();
+  const id = s.ui.activeImageId;
+  if (!id) return null;
+  return s.images[id] || null;
+}
+
+// Rotate slider history capture — one entry per drag session.
+let rotateHistoryImageId = null;
+let rotateHistoryBefore = null;
+
+function captureRotateBefore() {
+  const img = getActiveImage();
+  if (!img) { rotateHistoryImageId = null; rotateHistoryBefore = null; return; }
+  rotateHistoryImageId = img.id;
+  rotateHistoryBefore = JSON.parse(JSON.stringify(img.transforms));
+}
+
+function ensureRotateCaptured(id) {
+  if (rotateHistoryImageId === id && rotateHistoryBefore) return;
+  const img = getState().images[id];
+  if (!img) return;
+  rotateHistoryImageId = id;
+  rotateHistoryBefore = JSON.parse(JSON.stringify(img.transforms));
+}
+
+function commitRotateHistory(label) {
+  if (!rotateHistoryImageId || !rotateHistoryBefore) return;
+  const id = rotateHistoryImageId;
+  const before = rotateHistoryBefore;
+  rotateHistoryImageId = null;
+  rotateHistoryBefore = null;
+  const img = getState().images[id];
+  if (!img) return;
+  const after = JSON.parse(JSON.stringify(img.transforms));
+  if (JSON.stringify(before) === JSON.stringify(after)) return;
+  recordOp({
+    label,
+    imageId: id,
+    kind: 'transforms',
+    before: { transforms: before },
+    after:  { transforms: after  },
+  });
+}
+
+function syncFromState() {
+  if (!els) return;
+  const img = getActiveImage();
+  if (!img) {
+    // No active image — controls show but inert.
+    els.readout.textContent = t('selectRotateReadout', { deg: 0 });
+    if (document.activeElement !== els.slider) els.slider.value = '0';
+    els.flipH.classList.remove('is-active');
+    els.flipV.classList.remove('is-active');
+    return;
+  }
+  const rot = Math.round(img.transforms.rotate || 0);
+  els.readout.textContent = t('selectRotateReadout', { deg: rot });
+  if (document.activeElement !== els.slider) {
+    els.slider.value = String(rot);
+  }
+  els.flipH.classList.toggle('is-active', !!img.transforms.flipH);
+  els.flipV.classList.toggle('is-active', !!img.transforms.flipV);
+}
+
+// Test-only reset for browser specs.
+export function _resetForTest() {
+  active = false;
+  els = null;
+}

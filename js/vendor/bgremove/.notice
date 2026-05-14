@@ -1,0 +1,148 @@
+# Vendored: @imgly/background-removal (1.7.0) + data assets
+
+## License
+
+This directory contains source code and data from `@imgly/background-removal`,
+licensed under the **GNU Affero General Public License v3.0** (AGPL-3.0). See
+`LICENSE.md` in this directory for the full license text.
+
+Vendoring this library is the reason the entire NoAdsPhotos project is
+AGPL-3.0 (the license cascades — see the project root `LICENSE`).
+
+Per AGPL §13, users interacting with the deployed site must be offered the
+corresponding source code. This is provided via:
+- The "Source" link in the site footer (links to the project repo).
+- The privacy page (`/privacy.html`) which links to the source repo.
+- A direct attribution in `/THIRD-PARTY.md`.
+
+## What's vendored here
+
+Everything required for the bg-remove feature to work after a clean
+`git clone && npm install && npm run serve` is committed to this directory.
+No deploy-time install step is required.
+
+| File pattern                              | Source                                                              | Purpose |
+| ----------------------------------------- | ------------------------------------------------------------------- | --- |
+| `index.mjs` (~170 KB)                     | `@imgly/background-removal@1.7.0` npm tarball, `dist/index.mjs`     | Main ESM bundle (lazy-imported by `js/ops/bgremove.js`). |
+| `LICENSE.md` (~34 KB)                     | `@imgly/background-removal@1.7.0` npm tarball, `LICENSE.md`         | Full AGPL-3.0 license text. |
+| `resources.json` (~9 KB)                  | `staticimgly.com/@imgly/background-removal-data/1.7.0/dist/resources.json`, **trimmed** to the keys we serve | Manifest mapping logical keys to a list of content-addressable chunks. The trimmed copy lists ONLY the five keys we ship (see below). |
+| 33 SHA-256-named binary files (~117 MB)   | `staticimgly.com/@imgly/background-removal-data/1.7.0/dist/{hash}`   | The chunked binary data for each key in `resources.json`. The bundle fetches these by hash, concatenates them in memory, and feeds the result to ONNX Runtime Web. |
+
+### Why the chunks are named by hash
+
+`@imgly` ships its data CDN as a content-addressable store: each chunk's file
+name is the SHA-256 of its bytes. The bundle fetches `resources.json`,
+joins each chunk's name with `publicPath`, and verifies sizes against the
+manifest. We preserve this layout exactly so the unmodified upstream
+`index.mjs` works without patching. Filenames are deterministic across
+versions (same bytes → same name) — re-running
+`scripts/install-bgremove.mjs` is idempotent.
+
+### Keys we vendor (CPU + WebGPU)
+
+The upstream `resources.json` references seven keys totalling ~344 MB.
+We ship five — the ones any modern browser path can need at runtime:
+
+| Key                                                       | Size      | Chunks | Purpose |
+| --------------------------------------------------------- | --------- | ------ | --- |
+| `/models/isnet_fp16`                                      | 84.07 MB  | 22     | The fp16-quantized ISNET segmentation model — the variant `js/ops/bgremove.js` requests via `config.model`. Shared by both execution providers. |
+| `/onnxruntime-web/ort-wasm-simd-threaded.wasm`            | 11.27 MB  | 3      | ONNX Runtime Web's compiled WASM kernel for the CPU SIMD execution provider (threaded). |
+| `/onnxruntime-web/ort-wasm-simd-threaded.mjs`             | 0.02 MB   | 1      | ONNX Runtime Web's JavaScript glue for the CPU kernel above. |
+| `/onnxruntime-web/ort-wasm-simd-threaded.jsep.wasm`       | 21.95 MB  | 6      | ONNX Runtime Web's compiled WASM kernel for the WebGPU/JSEP execution provider. |
+| `/onnxruntime-web/ort-wasm-simd-threaded.jsep.mjs`        | 0.05 MB   | 1      | ONNX Runtime Web's JavaScript glue for the WebGPU/JSEP kernel above. |
+
+Browsers fetch only the variant they actually need:
+- **CPU-only browsers** (no `navigator.gpu`) pull the non-jsep wasm+mjs.
+- **WebGPU-capable browsers** pull the jsep wasm+mjs.
+
+Both paths share the same model file. So real-world first-use bandwidth is
+either ~95 MB (CPU) or ~106 MB (WebGPU), not the full ~118 MB.
+
+The other two upstream keys are intentionally **not** vendored:
+- `/models/isnet` (full precision, 176 MB) — too large; fp16 is visually identical for our use case.
+- `/models/isnet_quint8` (44 MB) — saves ~44 MB but degrades edge quality; we picked fp16 as a quality/size sweet spot.
+
+If you want any of these, run `node scripts/install-bgremove.mjs` after
+adding the corresponding key to `KEEP_KEYS` in that script, and update this
+notice + `THIRD-PARTY.md` accordingly.
+
+## Verification hashes for the small static files
+
+(Chunks are self-verifying by name; these are the small files that don't
+follow the hash-as-filename convention.)
+
+| File                                       | SHA-256 |
+| ------------------------------------------ | ------- |
+| `index.mjs`                                | `1bac0a7afd5d6a32bca8032f5e14f292e9b800fee3f2e9931fe79ee70bd9a7fd` |
+| `LICENSE.md`                               | `5ffb8eaf206c79f334260d6373dc8deda5235901d14e0c34e9b77e4c82cecb87` |
+| `resources.json` (trimmed, 5 keys)         | `bdc4d9df7dd31c76e8098b12c00d3542a9169d6e95bbebe0ed1cae1a8e54df30` |
+
+## `onnxruntime-web` peer dependency
+
+The `@imgly` bundle does `import("onnxruntime-web")` for the CPU path and
+`import("onnxruntime-web/webgpu")` for the WebGPU path at runtime. We
+resolve both bare specifiers via the import map in `index.html`:
+
+```html
+<script type="importmap">
+  {
+    "imports": {
+      "onnxruntime-web":        "/js/vendor/onnxruntime-web/ort.bundle.min.mjs",
+      "onnxruntime-web/webgpu": "/js/vendor/onnxruntime-web/ort.webgpu.bundle.min.mjs"
+    }
+  }
+</script>
+```
+
+The mapped files are `@imgly`'s pinned peer dep (currently `onnxruntime-web@1.21.0`,
+MIT-licensed), vendored alongside this directory under
+`js/vendor/onnxruntime-web/`. See `THIRD-PARTY.md` for the canonical entry.
+
+### Browser compatibility
+
+Import maps are baseline-supported in Chrome 89+, Firefox 108+, and Safari
+16.4+. The site's stated browser support already requires ES2022 module
+features, so this is well within scope. If a user on a stale browser hits
+the bg-remove feature, the import will throw at first use and surface a
+friendly toast (see `handleBgRemoveError` in `js/ops/bgremove.js`).
+
+WebGPU is available in Chrome 113+, Edge 113+, and Firefox 121+ (behind a
+flag at the time of writing). When `navigator.gpu` is absent, bgremove falls
+back to the CPU path automatically — the user sees no difference beyond a
+slightly slower run.
+
+## Hosting requirements
+
+The `npm run serve` script in this repo serves the right MIME types for
+both `.wasm` and `.mjs`. For production on **GitHub Pages**, no extra
+configuration is needed: GitHub Pages serves `.wasm` as
+`application/wasm` and `.mjs` as `text/javascript` by default.
+
+The site does NOT require cross-origin isolation (COOP/COEP). ORT Web will
+fall back from threaded to single-threaded WASM when `crossOriginIsolated`
+is false; we pay a small inference-time penalty in exchange for not having
+to set unusual headers on a static host.
+
+## Re-vendoring (bumping the upstream version)
+
+```bash
+# 1. Bump IMGLY_VERSION (and ORT_VERSION if @imgly's peer dep changed) in
+#    scripts/install-bgremove.mjs.
+# 2. Re-run:
+node scripts/install-bgremove.mjs
+# 3. Bump MODEL_HASH in js/ops/bgremove.js so previously-consented users
+#    are re-prompted.
+# 4. Bump the size line in THIRD-PARTY.md and re-verify
+#    privacy.html's size claim.
+# 5. Update the SHA-256 table above.
+```
+
+## Brand-stance compliance
+
+At runtime, no third-party CDN is contacted. Every asset path lives under
+`/js/vendor/bgremove/` or `/js/vendor/onnxruntime-web/`. This matches the
+"ad-free, tracker-free, self-hosted" stance and the privacy panel's
+disclosure. The 0-byte cost on initial page load is preserved because
+`js/ops/bgremove.js` lazy-imports the bundle only on the first "Remove
+background" click — the ~117 MB of chunks live in the repo but the browser
+never fetches them until they're needed, then they're cached.

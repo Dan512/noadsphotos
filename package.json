@@ -1,0 +1,19 @@
+{
+  "name": "noadsimages",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test --test-reporter=spec \"tests/unit/**/*.test.js\"",
+    "test:watch": "node --test --watch --test-reporter=spec \"tests/unit/**/*.test.js\"",
+    "test:browser": "playwright test",
+    "test:browser:headed": "playwright test --headed",
+    "test:browser:install": "playwright install --with-deps chromium webkit firefox",
+    "serve": "node scripts/serve.js",
+    "publish:dry": "node scripts/publish.mjs --dry-run",
+    "publish:public": "node scripts/publish.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "playwright": "^1.49.0"
+  }
+}

@@ -1,0 +1,744 @@
+// js/render/previewRenderer.js — base + overlay canvas renderer.
+//
+// Subscribes to state. When the editor view is active with an active image,
+// keeps the canvas elements sized appropriately (CSS size = image × zoom;
+// internal size = CSS size × DPR, capped at caps.maxCanvasSize) and runs a
+// rAF loop that redraws whenever the image's dirty flags say to.
+//
+// Phase 2 scope:
+//   - drawBase: clear + draw bitmap centered (transforms/chromakey/bgMask are
+//     baked-in placeholders for future phases; for now this is just a
+//     drawImage at canvas pixel dims).
+//   - drawOverlays: just clears overlay canvas (nothing to draw yet).
+//   - Async bitmap retry: if ensureBitmap hasn't resolved, mark baseDirty so
+//     the next frame retries after the decode commits.
+import { getState, subscribe } from './../state.js';
+import { markClean } from './renderCache.js';
+import { cssFilterString } from '../ops/adjust.js';
+import { drawText } from '../ops/text.js';
+import { drawBrush } from '../ops/brush.js';
+import { drawShape } from '../ops/shape.js';
+import { drawRedact } from '../ops/redact.js';
+import { drawOverlaySync, getOverlayBounds } from '../overlays.js';
+import { getSetting } from '../settings.js';
+
+// Module-level registry of per-type overlay drawers. All four kinds are
+// registered upfront — they're cheap pure functions and avoiding dynamic
+// imports on the hot render loop keeps the cost of a frame predictable.
+//
+// brush is wrapped so the renderer can pass the user's
+// `smoothBrushStrokes` setting through to drawBrush without every caller
+// having to know about it.
+const overlayDrawers = Object.freeze({
+  text:   drawText,
+  brush:  (ctx, brush) => drawBrush(ctx, brush, { smooth: getSetting('smoothBrushStrokes') !== false }),
+  shape:  drawShape,
+  redact: drawRedact,
+});
+
+const FRAME_PADDING = 16; // pixels inside .canvas-frame reserved for the zoom controls + margin
+
+// --- Masked-source cache ----------------------------------------------------
+//
+// When an image has a chromakeyMask or bgMask, we apply those masks to the
+// source bitmap in an offscreen canvas (at source resolution) once per mask
+// change, then use that canvas as the drawImage input. The cache key is the
+// pair (chromakeyMask, bgMask) — both Uint8Array instances are immutable per
+// design (callers swap the whole array; never mutate in place), so a
+// WeakMap-of-WeakMaps lookup never returns a stale canvas.
+//
+// Cache shape:
+//   maskedSourceCache: WeakMap<bitmap, WeakMap<chromakeyMaskOrSentinel, WeakMap<bgMaskOrSentinel, canvas>>>
+// A small sentinel object stands in for "no mask" so the WeakMap key is
+// always an object reference. Cache entries are GC'd when any of the keying
+// objects (bitmap or mask) becomes unreachable.
+const NO_MASK_SENTINEL = Object.freeze({ __noMask: true });
+const maskedSourceCache = new WeakMap();
+
+function getMaskedSourceCanvas(img) {
+  const bitmap = img.source.bitmap;
+  if (!bitmap) return null;
+  const cMask = img.chromakeyMask || NO_MASK_SENTINEL;
+  const bMask = img.bgMask        || NO_MASK_SENTINEL;
+  if (cMask === NO_MASK_SENTINEL && bMask === NO_MASK_SENTINEL) {
+    // No masks → no need for an offscreen canvas; the renderer should draw
+    // the raw bitmap.
+    return null;
+  }
+  let l1 = maskedSourceCache.get(bitmap);
+  if (!l1) {
+    l1 = new WeakMap();
+    maskedSourceCache.set(bitmap, l1);
+  }
+  let l2 = l1.get(cMask);
+  if (!l2) {
+    l2 = new WeakMap();
+    l1.set(cMask, l2);
+  }
+  let canvas = l2.get(bMask);
+  if (!canvas) {
+    canvas = buildMaskedSourceCanvas(img);
+    if (canvas) l2.set(bMask, canvas);
+  }
+  return canvas;
+}
+
+function buildMaskedSourceCanvas(img) {
+  const bitmap = img.source.bitmap;
+  const w = img.source.width;
+  const h = img.source.height;
+  if (!bitmap || !w || !h) return null;
+
+  // Prefer OffscreenCanvas where available; fall back to a detached
+  // <canvas>. Both expose the same 2d context API for our purposes.
+  let canvas;
+  if (typeof OffscreenCanvas !== 'undefined') {
+    canvas = new OffscreenCanvas(w, h);
+  } else {
+    canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+  }
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  ctx.drawImage(bitmap, 0, 0);
+
+  const cMask = img.chromakeyMask;
+  const bMask = img.bgMask;
+  if (cMask || bMask) {
+    const total = w * h;
+    // Guard: if a mask is wrong-sized for any reason, skip applying it
+    // rather than reading out of bounds. This lets callers swap masks
+    // safely while sources change shape (it shouldn't happen, but...).
+    const cOk = cMask && cMask.length === total;
+    const bOk = bMask && bMask.length === total;
+    if (cOk || bOk) {
+      const idata = ctx.getImageData(0, 0, w, h);
+      const px = idata.data;
+      for (let p = 0, i = 0; p < total; p++, i += 4) {
+        let a = px[i + 3];
+        if (cOk) a = (a * cMask[p]) / 255;
+        if (bOk) a = (a * bMask[p]) / 255;
+        // The 2D context's putImageData clamps automatically, but we round
+        // here for explicitness — a slightly fractional alpha would still
+        // be clamped to 0..255.
+        px[i + 3] = a;
+      }
+      ctx.putImageData(idata, 0, 0);
+    }
+  }
+
+  return canvas;
+}
+
+// Module-level overlay drawer registry. Tools (cropTool, redactTool, …) call
+// setOverlayDrawer() on activation so the rAF tick gives them a chance to
+// paint into the overlay canvas AFTER it's been cleared. The function is
+// invoked with (overlayCtx, overlayCanvas) every frame the overlay is
+// drawn — i.e. on every tick while `overlaysDirty` was true OR on every
+// tick while we keep marking the overlay dirty.
+let overlayDrawer = null;
+
+export function setOverlayDrawer(fn) {
+  overlayDrawer = typeof fn === 'function' ? fn : null;
+}
+
+export function clearOverlayDrawer() {
+  overlayDrawer = null;
+}
+
+// Module-level snapshot of the renderer's current forward-draw parameters,
+// captured each frame the base canvas is drawn. canvasToSource() and the
+// overlay-draw transform setup both read from this so the inverse mapping is
+// always in lockstep with what was last painted to the base canvas.
+//
+// Shape:
+//   { canvasW, canvasH, srcX, srcY, srcW, srcH, rot, flipH, flipV,
+//     drawScale, drawW, drawH }
+// where drawScale converts source pixels → canvas internal pixels.
+let lastDrawState = null;
+
+// Forward: source-pixel point → canvas-internal-pixel point. Mirrors the
+// transform sequence used by drawBase / drawOverlays so the inverse used by
+// canvasToSource stays in step.
+function sourceToCanvasInternal(p, ds) {
+  // 1. Subtract crop origin so the cropped area's top-left maps to (0,0) in
+  //    pre-rotation source space.
+  let x = p.x - ds.srcX - ds.srcW / 2;
+  let y = p.y - ds.srcY - ds.srcH / 2;
+  // 2. Apply flip (negative scale) in source space.
+  if (ds.flipH) x = -x;
+  if (ds.flipV) y = -y;
+  // 3. Scale source pixels → canvas pixels.
+  x *= ds.drawScale;
+  y *= ds.drawScale;
+  // 4. Apply rotation around the canvas center.
+  if (ds.rot) {
+    const rad = ds.rot * Math.PI / 180;
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+    const rx = x * cos - y * sin;
+    const ry = x * sin + y * cos;
+    x = rx; y = ry;
+  }
+  // 5. Translate to the canvas center.
+  x += ds.canvasW / 2;
+  y += ds.canvasH / 2;
+  return { x, y };
+}
+
+// Apply the renderer's current SOURCE → canvas-internal-pixel forward
+// transform to the given context. Tools that paint a live preview from
+// their per-tool overlayDrawer can call this so source-pixel coordinates
+// land at the same canvas pixels as the committed overlays the renderer
+// just drew. The context state is wrapped in save()/restore() by the
+// caller (we don't do it here — callers may need to layer more state).
+//
+// Returns true if the transform was applied; false if there's no active
+// image yet (in which case the caller should skip drawing).
+export function applySourceTransform(ctx) {
+  const ds = lastDrawState;
+  if (!ds || !ctx) return false;
+  ctx.translate(ds.canvasW / 2, ds.canvasH / 2);
+  if (ds.rot) ctx.rotate(ds.rot * Math.PI / 180);
+  if (ds.flipH || ds.flipV) ctx.scale(ds.flipH ? -1 : 1, ds.flipV ? -1 : 1);
+  ctx.scale(ds.drawScale, ds.drawScale);
+  ctx.translate(-ds.srcX - ds.srcW / 2, -ds.srcY - ds.srcH / 2);
+  return true;
+}
+
+// Inverse: canvas-element CSS-pixel point → source-pixel point. Used by
+// tools (e.g. textTool) so a click on the overlay element lands in the
+// correct image-pixel position regardless of zoom/rotate/flip/crop.
+//
+// The input is in CSS pixels relative to the overlay canvas element (the
+// same space attachPointer reports). We first convert to canvas-internal
+// pixels by multiplying by canvasInternalW / canvasCssW, then invert each
+// step of the forward transform.
+export function canvasToSource(p) {
+  const ds = lastDrawState;
+  if (!ds) return null;
+  const overlay = document.getElementById('overlay-canvas');
+  if (!overlay) return null;
+  const cssW = parseFloat(overlay.style.width) || overlay.width;
+  const cssH = parseFloat(overlay.style.height) || overlay.height;
+  if (!cssW || !cssH) return null;
+  // CSS → internal pixel scaling.
+  const ix = (p.x / cssW) * overlay.width;
+  const iy = (p.y / cssH) * overlay.height;
+
+  // Reverse step 5: subtract canvas center.
+  let x = ix - ds.canvasW / 2;
+  let y = iy - ds.canvasH / 2;
+  // Reverse step 4: inverse rotation.
+  if (ds.rot) {
+    const rad = -ds.rot * Math.PI / 180;
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+    const rx = x * cos - y * sin;
+    const ry = x * sin + y * cos;
+    x = rx; y = ry;
+  }
+  // Reverse step 3: divide by drawScale to recover source pixels.
+  if (!ds.drawScale) return null;
+  x /= ds.drawScale;
+  y /= ds.drawScale;
+  // Reverse step 2: inverse flip.
+  if (ds.flipH) x = -x;
+  if (ds.flipV) y = -y;
+  // Reverse step 1: add crop origin + half source dims.
+  x += ds.srcX + ds.srcW / 2;
+  y += ds.srcY + ds.srcH / 2;
+  return { x, y };
+}
+
+// Read --accent from the root style. Cheap; uses the same fallback color
+// used elsewhere in the editor.
+function getAccent() {
+  try {
+    const styles = getComputedStyle(document.documentElement);
+    const v = styles.getPropertyValue('--accent').trim();
+    if (v) return v;
+  } catch { /* ignore */ }
+  return '#2a8c69';
+}
+
+export function initPreviewRenderer(lifecycle, caps) {
+  const dpr = Math.max(1, Math.floor(window.devicePixelRatio || 1));
+  const maxSize = (caps && caps.maxCanvasSize) || 4096;
+
+  let baseCanvas = null;
+  let overlayCanvas = null;
+  let frameEl = null;
+  let baseCtx = null;
+  let overlayCtx = null;
+
+  // Sizing memo so we only mutate canvas dims when they actually change.
+  let lastSizingKey = '';
+
+  // Last seen active id so we can kick lifecycle.setWindow on transitions.
+  let lastActiveId = null;
+
+  // rAF handle.
+  let raf = null;
+
+  // Bind DOM refs lazily on first tick — editor.js may not have mounted yet
+  // when initPreviewRenderer is called during boot.
+  function bindDom() {
+    if (baseCanvas && overlayCanvas && frameEl) return true;
+    baseCanvas    = document.getElementById('base-canvas');
+    overlayCanvas = document.getElementById('overlay-canvas');
+    frameEl       = baseCanvas ? baseCanvas.parentElement : null;
+    if (!baseCanvas || !overlayCanvas || !frameEl) return false;
+    baseCtx    = baseCanvas.getContext('2d');
+    overlayCtx = overlayCanvas.getContext('2d');
+    return true;
+  }
+
+  // Compute the effective zoom factor from state. 'fit' returns the auto-fit
+  // factor that keeps the image inside the frame without upscaling beyond 1×.
+  function effectiveZoom(state, imgW, imgH) {
+    const z = state.ui.zoom;
+    if (z !== 'fit' && Number.isFinite(z) && z > 0) return z;
+    // Compute fit. Frame might be hidden (0×0) if editor not yet visible.
+    const rect = frameEl.getBoundingClientRect();
+    const fw = Math.max(1, rect.width  - FRAME_PADDING * 2);
+    const fh = Math.max(1, rect.height - FRAME_PADDING * 2);
+    return Math.min(fw / imgW, fh / imgH, 1);
+  }
+
+  // Given an image, return its OUTPUT dims after applying crop (if any) and
+  // 90°-multiple rotation. Used by sizeCanvases so the visible canvas
+  // accommodates the rotated/cropped image. Non-90 rotations are passed
+  // through as their bounding-box dims (matches geometry.rotateRect).
+  function postTransformDims(img) {
+    const crop = img.transforms.crop;
+    let w = crop ? crop.w : img.source.width;
+    let h = crop ? crop.h : img.source.height;
+    const rot = ((img.transforms.rotate % 360) + 360) % 360;
+    if (rot === 90 || rot === 270) {
+      const tmp = w; w = h; h = tmp;
+    } else if (rot !== 0 && rot !== 180) {
+      // Non-quarter rotation — compute bounding box.
+      const rad = rot * Math.PI / 180;
+      const cos = Math.abs(Math.cos(rad));
+      const sin = Math.abs(Math.sin(rad));
+      const bw = w * cos + h * sin;
+      const bh = w * sin + h * cos;
+      w = bw; h = bh;
+    }
+    return { w, h };
+  }
+
+  function sizeCanvases(img) {
+    const s = getState();
+    const dims = postTransformDims(img);
+    const w = dims.w;
+    const h = dims.h;
+    if (!w || !h) return;
+
+    const zoom = effectiveZoom(s, w, h);
+    // CSS size (logical pixels).
+    let cssW = Math.max(1, Math.round(w * zoom));
+    let cssH = Math.max(1, Math.round(h * zoom));
+    // Internal pixel size capped at maxCanvasSize.
+    let pixW = Math.min(maxSize, Math.round(cssW * dpr));
+    let pixH = Math.min(maxSize, Math.round(cssH * dpr));
+    // If we hit the cap, recompute the CSS size so the canvas remains visually
+    // sized to its internal-pixel-resolution × (1/dpr) instead of stretching.
+    if (pixW < cssW * dpr) cssW = Math.round(pixW / dpr);
+    if (pixH < cssH * dpr) cssH = Math.round(pixH / dpr);
+
+    // Key now includes the rotated/cropped dims so a transform that swaps
+    // post-rotation orientation forces a re-fit.
+    const key = `${cssW}x${cssH}@${pixW}x${pixH}`;
+    if (key === lastSizingKey) return;
+    lastSizingKey = key;
+
+    for (const c of [baseCanvas, overlayCanvas]) {
+      c.width  = pixW;
+      c.height = pixH;
+      c.style.width  = cssW + 'px';
+      c.style.height = cssH + 'px';
+    }
+    // Re-bake on resize.
+    img.baseDirty = true;
+    img.overlaysDirty = true;
+  }
+
+  // Capture the forward-draw parameters for the active image. Called every
+  // frame from `tick` so canvasToSource and the overlay transform setup stay
+  // in lockstep with whatever the base canvas was last painted with — even
+  // on frames where drawBase isn't re-invoked (because nothing changed).
+  function captureDrawState(img) {
+    if (!baseCanvas) return null;
+    const { crop, rotate, flipH, flipV } = img.transforms;
+    const src = crop && crop.w > 0 && crop.h > 0
+      ? crop
+      : { x: 0, y: 0, w: img.source.width, h: img.source.height };
+    const rot = ((rotate % 360) + 360) % 360;
+    let outW, outH;
+    if (rot === 90 || rot === 270) {
+      outW = src.h; outH = src.w;
+    } else if (rot === 0 || rot === 180) {
+      outW = src.w; outH = src.h;
+    } else {
+      const rad = rot * Math.PI / 180;
+      const cos = Math.abs(Math.cos(rad));
+      const sin = Math.abs(Math.sin(rad));
+      outW = src.w * cos + src.h * sin;
+      outH = src.w * sin + src.h * cos;
+    }
+    const canvasW = baseCanvas.width;
+    const canvasH = baseCanvas.height;
+    if (!canvasW || !canvasH || !outW || !outH) return null;
+    const drawScale = Math.min(canvasW / outW, canvasH / outH);
+    const drawW = src.w * drawScale;
+    const drawH = src.h * drawScale;
+    return {
+      canvasW, canvasH,
+      srcX: src.x, srcY: src.y, srcW: src.w, srcH: src.h,
+      rot, flipH: !!flipH, flipV: !!flipV,
+      drawScale, drawW, drawH,
+    };
+  }
+
+  function drawBase(img) {
+    if (!baseCtx) return;
+    const bitmap = img.source.bitmap;
+    baseCtx.setTransform(1, 0, 0, 1, 0, 0);
+    baseCtx.clearRect(0, 0, baseCanvas.width, baseCanvas.height);
+    if (!bitmap) {
+      // No bitmap yet — request decode and let the next tick retry.
+      lifecycle.ensureBitmap(img.id).catch(err => {
+        console.error('previewRenderer: ensureBitmap failed', err);
+      });
+      // Keep baseDirty true so the next frame redraws once the bitmap commits.
+      return false;
+    }
+
+    // If chromakey or bgMask is set, draw from a pre-masked offscreen canvas
+    // at source resolution instead of the raw bitmap. The masked canvas is
+    // cached on a WeakMap keyed by the mask Uint8Array, so identical masks
+    // reuse the same canvas across frames (masks are immutable per design).
+    const sourceImage = getMaskedSourceCanvas(img) || bitmap;
+
+    const ds = lastDrawState;
+    if (!ds) return false;
+
+    baseCtx.imageSmoothingEnabled = true;
+    baseCtx.imageSmoothingQuality = 'high';
+    baseCtx.save();
+    // Translate to canvas center, apply rotation + flip, then draw the
+    // cropped source centered on (0, 0).
+    baseCtx.translate(ds.canvasW / 2, ds.canvasH / 2);
+    if (ds.rot) baseCtx.rotate(ds.rot * Math.PI / 180);
+    if (ds.flipH || ds.flipV) baseCtx.scale(ds.flipH ? -1 : 1, ds.flipV ? -1 : 1);
+    baseCtx.drawImage(
+      sourceImage,
+      ds.srcX, ds.srcY, ds.srcW, ds.srcH,
+      -ds.drawW / 2, -ds.drawH / 2, ds.drawW, ds.drawH,
+    );
+    baseCtx.restore();
+    return true;
+  }
+
+  // Compute and write the CSS filter for the active image. Blur is given in
+  // SOURCE pixels by the state, but on screen the image may be scaled (fit
+  // zoom usually <= 1, zoom-in > 1). To keep the blur radius visually
+  // consistent between preview and export we scale by displaySize /
+  // sourceSize, using the smaller of the two ratios for safety so the blur
+  // never appears too aggressive (consistent with the renderer's letterbox
+  // logic).
+  function applyCssFilter(img) {
+    if (!baseCanvas) return;
+    const adjust = img.adjust || { brightness: 0, contrast: 0, saturation: 0, blur: 0 };
+    const preset = img.filterPreset || 'none';
+
+    let blurForPreview = adjust.blur;
+    if (blurForPreview > 0) {
+      // Source dims (post-crop, pre-rotation) tell us how big the underlying
+      // pixel data is; CSS dims of the canvas tell us how it lands on
+      // screen. The renderer letterboxes when source aspect != canvas
+      // aspect, so the smaller ratio is the correct scale.
+      const crop = img.transforms && img.transforms.crop;
+      const sourceW = crop && crop.w > 0 ? crop.w : img.source.width;
+      const sourceH = crop && crop.h > 0 ? crop.h : img.source.height;
+      const cssW = parseFloat(baseCanvas.style.width) || baseCanvas.width;
+      const cssH = parseFloat(baseCanvas.style.height) || baseCanvas.height;
+      if (sourceW > 0 && sourceH > 0 && cssW > 0 && cssH > 0) {
+        const scale = Math.min(cssW / sourceW, cssH / sourceH);
+        blurForPreview = adjust.blur * scale;
+      }
+    }
+
+    const value = cssFilterString(adjust, preset, blurForPreview);
+    if (baseCanvas.style.filter !== value) {
+      baseCanvas.style.filter = value;
+    }
+  }
+
+  function drawOverlays(img) {
+    if (!overlayCtx) return;
+    overlayCtx.setTransform(1, 0, 0, 1, 0, 0);
+    overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+
+    // Committed overlays (text, brush, shape, redact) — draw FIRST so tools
+    // can paint their interactive UI on top. We apply the same forward
+    // transform the base canvas used so source-pixel coords land on the
+    // same canvas pixels as the matching image pixels.
+    const ds = lastDrawState;
+    const overlays = img && Array.isArray(img.overlays) ? img.overlays : null;
+    if (ds && overlays && overlays.length > 0) {
+      overlayCtx.save();
+      // Same transform as drawBase: center → rotate → flip → scale to source.
+      overlayCtx.translate(ds.canvasW / 2, ds.canvasH / 2);
+      if (ds.rot) overlayCtx.rotate(ds.rot * Math.PI / 180);
+      if (ds.flipH || ds.flipV) overlayCtx.scale(ds.flipH ? -1 : 1, ds.flipV ? -1 : 1);
+      // Scale source pixels → canvas pixels.
+      overlayCtx.scale(ds.drawScale, ds.drawScale);
+      // The drawImage call uses `-ds.drawW / 2` as its top-left, which in
+      // source pixels is `-ds.srcW/2`. Subtract crop origin so source-pixel
+      // coordinate (srcX, srcY) lands exactly where the cropped region's
+      // top-left lands in the base canvas.
+      overlayCtx.translate(-ds.srcX - ds.srcW / 2, -ds.srcY - ds.srcH / 2);
+      for (const o of overlays) {
+        try {
+          drawOverlaySync(overlayCtx, o, overlayDrawers);
+        } catch (err) {
+          // Unknown overlay types (Phase 7B not yet implemented) throw —
+          // log once per frame rather than spamming.
+          console.warn('previewRenderer: drawOverlay failed', err.message);
+        }
+      }
+      overlayCtx.restore();
+
+      // Optional debug-style outlines around each overlay (settings:
+      // showOverlayOutlines). Drawn AFTER the overlays themselves so the
+      // outlines sit on top, in canvas-pixel space so the dash width stays
+      // 1 logical pixel regardless of zoom.
+      if (getSetting('showOverlayOutlines')) {
+        drawOverlayOutlines(img, overlays);
+      }
+
+      // Selection adornment for the focused overlay. Drawn in canvas-pixel
+      // space (no source-pixel transform) so the handle thickness doesn't
+      // shrink with zoom.
+      const s = getState();
+      const selId = s.ui && s.ui.selectedOverlayId;
+      if (selId) {
+        drawSelection(img, selId);
+      }
+    }
+
+    // Per-tool overlay drawer (crop tool, etc.) gets the last word so it can
+    // paint UI on top of any committed overlays.
+    if (overlayDrawer) {
+      try {
+        overlayDrawer(overlayCtx, overlayCanvas);
+      } catch (err) {
+        console.error('previewRenderer: overlay drawer threw', err);
+      }
+    }
+  }
+
+  // Draw a 1px dashed outline around every overlay's bounding box. Used by
+  // the `showOverlayOutlines` setting so users can locate overlays even when
+  // they're empty (e.g. a text overlay with no content yet) or far off the
+  // visible area. Distinct from drawSelection: outlines mark every overlay;
+  // selection marks the focused one and adds handles.
+  function drawOverlayOutlines(img, overlays) {
+    if (!lastDrawState || !overlayCtx) return;
+    const ds = lastDrawState;
+    overlayCtx.save();
+    overlayCtx.setTransform(1, 0, 0, 1, 0, 0);
+    overlayCtx.lineWidth = 1;
+    overlayCtx.setLineDash([4, 3]);
+    overlayCtx.strokeStyle = getAccent();
+    for (const o of overlays) {
+      if (!o) continue;
+      const bounds = getOverlayBounds(o, overlayCtx);
+      if (!bounds || bounds.w <= 0 || bounds.h <= 0) continue;
+      const corners = [
+        { x: bounds.x,            y: bounds.y },
+        { x: bounds.x + bounds.w, y: bounds.y },
+        { x: bounds.x + bounds.w, y: bounds.y + bounds.h },
+        { x: bounds.x,            y: bounds.y + bounds.h },
+      ];
+      const screen = corners.map(c => sourceToCanvasInternal(c, ds));
+      overlayCtx.beginPath();
+      overlayCtx.moveTo(screen[0].x, screen[0].y);
+      for (let i = 1; i < 4; i++) overlayCtx.lineTo(screen[i].x, screen[i].y);
+      overlayCtx.closePath();
+      overlayCtx.stroke();
+    }
+    overlayCtx.restore();
+  }
+
+  // Compute the selection bounding box for an overlay in CANVAS pixels and
+  // draw a 1px outline plus 4 corner handles. Coordinates flow through the
+  // same forward transform as the base canvas; the box is drawn aligned to
+  // the rotated overlay where possible (text/shape support `rot`).
+  function drawSelection(img, overlayId) {
+    if (!lastDrawState || !overlayCtx) return;
+    const ds = lastDrawState;
+    const o = img.overlays.find(x => x && x.id === overlayId);
+    if (!o) return;
+
+    // Compute the overlay's source-pixel bounds via the shared dispatch.
+    // getOverlayBounds handles text/brush/shape/redact uniformly.
+    const bounds = getOverlayBounds(o, overlayCtx);
+    if (!bounds || bounds.w <= 0 || bounds.h <= 0) return;
+
+    overlayCtx.save();
+    overlayCtx.setTransform(1, 0, 0, 1, 0, 0);
+
+    // Map each corner of the source-space rect into canvas pixels.
+    const corners = [
+      { x: bounds.x,            y: bounds.y },
+      { x: bounds.x + bounds.w, y: bounds.y },
+      { x: bounds.x + bounds.w, y: bounds.y + bounds.h },
+      { x: bounds.x,            y: bounds.y + bounds.h },
+    ];
+    const screen = corners.map(c => sourceToCanvasInternal(c, ds));
+
+    const accent = getAccent();
+    // Translucent fill + accent stroke.
+    overlayCtx.lineWidth = 1.5;
+    overlayCtx.strokeStyle = accent;
+    overlayCtx.beginPath();
+    overlayCtx.moveTo(screen[0].x, screen[0].y);
+    for (let i = 1; i < 4; i++) overlayCtx.lineTo(screen[i].x, screen[i].y);
+    overlayCtx.closePath();
+    overlayCtx.stroke();
+
+    // 4 corner handles (small filled squares with accent border).
+    const HANDLE = 10;
+    overlayCtx.fillStyle = '#ffffff';
+    for (const p of screen) {
+      overlayCtx.fillRect(p.x - HANDLE / 2, p.y - HANDLE / 2, HANDLE, HANDLE);
+      overlayCtx.strokeRect(p.x - HANDLE / 2, p.y - HANDLE / 2, HANDLE, HANDLE);
+    }
+    overlayCtx.restore();
+  }
+
+  function tick() {
+    raf = requestAnimationFrame(tick);
+    if (!bindDom()) return;
+
+    const s = getState();
+    if (s.ui.view !== 'editor') return;
+    const activeId = s.ui.activeImageId;
+    if (!activeId) return;
+    const img = s.images[activeId];
+    if (!img) return;
+
+    // On active-image change, refresh the lifecycle window. setWindow is
+    // async but fire-and-forget here — the rAF loop retries baseDirty until
+    // the bitmap is committed.
+    if (activeId !== lastActiveId) {
+      lastActiveId = activeId;
+      lastSizingKey = ''; // force resize calc on new image
+      lifecycle.setWindow(activeId).catch(err => {
+        console.error('previewRenderer: setWindow failed', err);
+      });
+      img.baseDirty = true;
+      img.overlaysDirty = true;
+    }
+
+    sizeCanvases(img);
+
+    // Refresh the cached forward-draw parameters. canvasToSource() and the
+    // overlay layer's transform setup both read this; recomputing every
+    // tick keeps them in lockstep with any zoom/transform changes even on
+    // frames where drawBase doesn't re-run.
+    lastDrawState = captureDrawState(img);
+
+    // Apply the live CSS filter for adjustments + preset every frame the
+    // image is active. The filter string is cheap to compute and assigning
+    // to style.filter is a no-op when the value is unchanged (browsers
+    // dedupe), so we don't need a dirty flag of our own. We DO write
+    // every tick so changes propagate even without baseDirty.
+    applyCssFilter(img);
+
+    if (img.baseDirty) {
+      const drawn = drawBase(img);
+      if (drawn) markClean(img, 'base');
+      // else: leave baseDirty true so next frame retries after bitmap commits
+    }
+    // When an overlay drawer is registered (e.g. crop tool) we redraw every
+    // frame so drags stay live without needing each pointermove to dirty
+    // state. Without a drawer, we honour the cache flag.
+    if (img.overlaysDirty || overlayDrawer) {
+      drawOverlays(img);
+      markClean(img, 'overlays');
+    }
+  }
+
+  // Kick a redirty + size recompute on viewport resize. Use ResizeObserver
+  // when available so we react to the frame's actual box, not just the
+  // window (the panel can change width independently in principle).
+  const onResize = () => {
+    lastSizingKey = '';
+    const s = getState();
+    const img = s.ui.activeImageId ? s.images[s.ui.activeImageId] : null;
+    if (img) {
+      img.baseDirty = true;
+      img.overlaysDirty = true;
+    }
+  };
+  window.addEventListener('resize', onResize);
+
+  let resizeObserver = null;
+  if (typeof ResizeObserver !== 'undefined') {
+    resizeObserver = new ResizeObserver(onResize);
+    // Attach lazily after first DOM bind.
+    const tryObserve = () => {
+      if (bindDom()) {
+        resizeObserver.observe(frameEl);
+      } else {
+        requestAnimationFrame(tryObserve);
+      }
+    };
+    tryObserve();
+  }
+
+  // Subscribe to state so transitions wake the loop and trigger redraws.
+  // We also mark the overlay layer dirty here so changes that don't flow
+  // through invalidate(img, 'OVERLAY') (e.g. ui.selectedOverlayId switching
+  // between overlays via the overlays panel, or showOverlayOutlines /
+  // smoothBrushStrokes settings flipping) still redraw the selection.
+  let lastSelectedId = null;
+  let lastOverlayOutlines = null;
+  let lastSmoothBrush = null;
+  subscribe(() => {
+    const s = getState();
+    if (s.ui.view === 'editor') {
+      const id = s.ui.activeImageId;
+      if (id && s.images[id]) {
+        // Treat any state change while editor is open as a hint to recheck
+        // sizing (zoom may have changed). Marking dirty is cheap.
+        lastSizingKey = '';
+        const selId = s.ui.selectedOverlayId || null;
+        if (selId !== lastSelectedId) {
+          lastSelectedId = selId;
+          s.images[id].overlaysDirty = true;
+        }
+        const outlines = getSetting('showOverlayOutlines');
+        if (outlines !== lastOverlayOutlines) {
+          lastOverlayOutlines = outlines;
+          s.images[id].overlaysDirty = true;
+        }
+        const smooth = getSetting('smoothBrushStrokes');
+        if (smooth !== lastSmoothBrush) {
+          lastSmoothBrush = smooth;
+          s.images[id].overlaysDirty = true;
+        }
+      }
+    }
+  });
+
+  // Start the rAF loop. It self-perpetuates and is cheap when there's
+  // nothing to draw — early returns short-circuit any work.
+  if (!raf) raf = requestAnimationFrame(tick);
+}

@@ -1,0 +1,9 @@
+{
+  "name": "NoAdsPhotos",
+  "short_name": "NoAdsPhotos",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fbf8f2",
+  "theme_color": "#fbf8f2",
+  "icons": [{ "src": "/img/logo.svg", "type": "image/svg+xml", "sizes": "any" }]
+}

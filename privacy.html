@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NoAdsPhotos — Privacy</title>
+  <meta name="description" content="Privacy disclosure for NoAdsPhotos. Images never leave your device. No analytics, no cookies, no third-party CDNs.">
+  <meta name="theme-color" content="#0f1410">
+  <link rel="icon" href="/img/logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1><a href="/" data-i18n="brandName">NoAdsPhotos</a></h1>
+    <div class="spacer"></div>
+  </header>
+
+  <main>
+    <article class="prose">
+      <h1>Privacy</h1>
+
+      <p class="lead">NoAdsPhotos processes images entirely in your browser. Image files never leave your device — there is no upload, no server-side rendering, and no cloud round-trip.</p>
+
+      <h2>What this site fetches (from this origin only)</h2>
+      <ul>
+        <li>HTML, CSS, JavaScript, and self-hosted Onest fonts.</li>
+        <li>The JSZip library (~97&nbsp;KB) — ONLY when you click "Export queue (ZIP)" for the first time. Vendored from <a href="https://stuk.github.io/jszip/" target="_blank" rel="noopener">stuk.github.io/jszip</a>, served from this origin. Used to package your batch exports into a single ZIP locally — no network traffic.</li>
+        <li>Self-hosted ML model files for background removal (the <a href="https://github.com/imgly/background-removal-js" target="_blank" rel="noopener">@imgly/background-removal</a> ISNET fp16 model + <a href="https://github.com/microsoft/onnxruntime" target="_blank" rel="noopener">ONNX Runtime Web</a> WASM kernels — both the CPU SIMD path and the WebGPU/JSEP path so the model can run on the GPU when available). These files (~118&nbsp;MB total) are part of the site code, shipped from this repository — they are NOT a separate first-use download from a third party. Your browser fetches them only the first time you click "Remove background", from this origin, and caches them thereafter. The browser pulls only the kernels it actually needs — CPU-only browsers never download the WebGPU variant, and vice versa.</li>
+        <li>The favicon and logo SVG.</li>
+      </ul>
+
+      <h2>What this site does NOT do</h2>
+      <ul>
+        <li>No third-party CDNs (no Google Fonts, no jsDelivr, no cdnjs, no Cloudflare-served libraries).</li>
+        <li>No analytics or telemetry (no Google Analytics, Plausible, Fathom, Mixpanel, gtag, fbq, or similar).</li>
+        <li>No cookies. No fingerprinting. No localStorage data shared off-device.</li>
+        <li>No upload of your images, masks, or edits. No "save to cloud" feature exists.</li>
+      </ul>
+
+      <h2>External links that open on click</h2>
+      <ul>
+        <li>GitHub source repository — only if you click the "Source" link in the footer.</li>
+        <li>Ko-fi tip page — only if you click "Tip".</li>
+        <li>Nothing else; verify in DevTools &rarr; Network.</li>
+      </ul>
+
+      <h2>Local storage</h2>
+      <p>Your preferences (language, theme, tool settings, default export format) are saved in your browser's localStorage. You can clear them anytime via your browser's site-data tools.</p>
+
+      <h2>AI translations</h2>
+      <p>The UI is translated into 15 languages with the help of AI tools. Errors may exist; report them in the GitHub issue tracker.</p>
+
+      <h2>Open source</h2>
+      <p>Licensed under GNU AGPL v3.0. Source repository: <a href="https://github.com/Dan512/noadsphotos" target="_blank" rel="noopener">https://github.com/Dan512/noadsphotos</a>.</p>
+
+      <h2>Tip</h2>
+      <p>If this is useful, <a href="https://ko-fi.com/noadsdude" target="_blank" rel="noopener">tip via Ko-fi</a>.</p>
+    </article>
+  </main>
+
+  <footer>
+    <a href="/" data-i18n="home">Home</a>
+    <span aria-hidden="true">·</span>
+    <a href="https://github.com/Dan512/noadsphotos" target="_blank" rel="noopener" data-i18n="source">Source</a>
+    <span aria-hidden="true">·</span>
+    <a href="https://ko-fi.com/noadsdude" target="_blank" rel="noopener" data-i18n="tipFooter">Tip</a>
+  </footer>
+</body>
+</html>

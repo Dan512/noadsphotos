@@ -1,0 +1,2215 @@
+@font-face {
+    font-family: 'Onest';
+    font-style: normal;
+    font-weight: 300;
+    font-display: swap;
+    src: url('../fonts/onest-300-normal-latin-ext.woff2') format('woff2');
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+    font-family: 'Onest';
+    font-style: normal;
+    font-weight: 300;
+    font-display: swap;
+    src: url('../fonts/onest-300-normal-latin.woff2') format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+    font-family: 'Onest';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url('../fonts/onest-400-normal-latin-ext.woff2') format('woff2');
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+    font-family: 'Onest';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url('../fonts/onest-400-normal-latin.woff2') format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+    font-family: 'Onest';
+    font-style: normal;
+    font-weight: 500;
+    font-display: swap;
+    src: url('../fonts/onest-500-normal-latin-ext.woff2') format('woff2');
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+    font-family: 'Onest';
+    font-style: normal;
+    font-weight: 500;
+    font-display: swap;
+    src: url('../fonts/onest-500-normal-latin.woff2') format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+    font-family: 'Onest';
+    font-style: normal;
+    font-weight: 600;
+    font-display: swap;
+    src: url('../fonts/onest-600-normal-latin-ext.woff2') format('woff2');
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+    font-family: 'Onest';
+    font-style: normal;
+    font-weight: 600;
+    font-display: swap;
+    src: url('../fonts/onest-600-normal-latin.woff2') format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+    font-family: 'Onest';
+    font-style: normal;
+    font-weight: 700;
+    font-display: swap;
+    src: url('../fonts/onest-700-normal-latin-ext.woff2') format('woff2');
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+    font-family: 'Onest';
+    font-style: normal;
+    font-weight: 700;
+    font-display: swap;
+    src: url('../fonts/onest-700-normal-latin.woff2') format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+:root {
+  color-scheme: light dark;
+  /* Native form controls (range, checkbox, …) inherit the brand color so we
+     don't need per-control tinting. Set globally; individual surfaces can
+     override on the rare case they need a different hue. */
+  accent-color: var(--accent);
+
+  /* --- Color tokens (OKLCH) --- */
+  --bg:               light-dark(oklch(0.985 0.003 90),   oklch(0.16 0.008 160));
+  --surface:          light-dark(oklch(1     0    0),     oklch(0.20 0.008 160));
+  --surface-2:        light-dark(oklch(0.97  0.004 100),  oklch(0.23 0.008 160));
+  --text:             light-dark(oklch(0.18  0.005 160),  oklch(0.96 0.005 100));
+  --text-muted:       light-dark(oklch(0.45  0.006 160),  oklch(0.66 0.006 160));
+  --text-secondary:   light-dark(oklch(0.32  0.006 160),  oklch(0.82 0.006 160));
+  --border:           light-dark(oklch(0.90  0.005 120),  oklch(0.27 0.008 160));
+  --border-strong:    light-dark(oklch(0.82  0.005 120),  oklch(0.34 0.008 160));
+  --accent:           light-dark(oklch(0.42  0.08  160),  oklch(0.72 0.06  160));
+  --accent-hover:     light-dark(oklch(0.36  0.08  160),  oklch(0.78 0.06  160));
+  --accent-contrast:  light-dark(oklch(0.99  0.003 90),   oklch(0.12 0.005 160));
+  --danger:           light-dark(oklch(0.50  0.18  28),   oklch(0.72 0.16  28));
+  --warn:             light-dark(oklch(0.62  0.16  70),   oklch(0.80 0.13  70));
+  --focus-ring:       light-dark(oklch(0.55  0.13  160 / 0.7), oklch(0.78 0.10 160 / 0.8));
+
+  /* --- Spacing (4pt) --- */
+  --space-xs:  4px;
+  --space-sm:  8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 24px;
+  --space-2xl: 32px;
+  --space-3xl: 48px;
+  --space-4xl: 64px;
+  --space-5xl: 96px;
+
+  /* --- Radius --- */
+  --radius-card: 4px;
+  --radius-control: 6px;
+  --radius-pill: 999px;
+
+  /* --- Typography --- */
+  --font-sans: 'Onest', system-ui, -apple-system, sans-serif;
+  --font-numeric-features: 'tnum' 1, 'kern' 1, 'ss01' 1;
+  /* Type scale (rem; product UI, NOT fluid) */
+  --t-xs:  0.75rem;
+  --t-sm:  0.875rem;
+  --t-md:  1rem;
+  --t-lg:  1.25rem;
+  --t-xl:  1.5rem;
+  --t-2xl: 1.875rem;
+  --t-3xl: 2.25rem;
+
+  /* --- Motion --- */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-out-strong: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-fast: 120ms;
+  --dur-med:  220ms;
+  --dur-slow: 360ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --dur-fast: 0ms; --dur-med: 0ms; --dur-slow: 0ms; }
+}
+
+html { color-scheme: var(--color-scheme); }
+html[data-theme="light"] { color-scheme: light; }
+html[data-theme="dark"]  { color-scheme: dark; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--t-md);
+  font-feature-settings: var(--font-numeric-features);
+  letter-spacing: -0.005em;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* --- Base layout (chrome only — components land in later phases) --- */
+
+header.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  height: 56px;
+  padding: 0 var(--space-xl);
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: var(--t-lg);
+  font-weight: 600;
+}
+
+.topbar .spacer {
+  flex: 1;
+}
+
+.topbar .controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+main#workspace {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding: var(--space-xl);
+}
+
+footer {
+  padding: var(--space-lg) var(--space-xl);
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: var(--t-sm);
+}
+
+:where(button) {
+  background: none;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-control);
+  font: inherit;
+  transition: color var(--dur-fast) var(--ease-out),
+              background-color var(--dur-fast) var(--ease-out);
+}
+
+:where(button):hover {
+  background-color: var(--surface-2);
+}
+
+:where(button).btn-primary {
+  background-color: var(--accent);
+  color: var(--accent-contrast);
+}
+
+:where(button).btn-primary:hover {
+  background-color: var(--accent-hover);
+}
+
+/* Topbar wordmark link (used on subpages) */
+.topbar h1 a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* Tip link styled like a button in the topbar */
+.btn-tip {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-control);
+  color: var(--text);
+  text-decoration: none;
+  transition: color var(--dur-fast) var(--ease-out),
+              background-color var(--dur-fast) var(--ease-out);
+}
+
+.btn-tip:hover {
+  background-color: var(--surface-2);
+}
+
+/* View placeholders — filled in later phases */
+.view {
+  display: block;
+}
+
+/* Footer link layout */
+footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+footer a,
+footer button {
+  color: var(--text-muted);
+  text-decoration: none;
+  padding: var(--space-xs) var(--space-sm);
+}
+
+footer a:hover,
+footer button:hover {
+  color: var(--text);
+  background-color: transparent;
+}
+
+/* Static prose pages (privacy.html, 404.html) */
+.prose {
+  max-width: 65ch;
+  margin: var(--space-2xl) auto;
+  padding: 0 var(--space-xl);
+  line-height: 1.6;
+}
+
+.prose h1 {
+  font-size: var(--t-2xl);
+  font-weight: 600;
+  margin: 0 0 var(--space-lg);
+}
+
+.prose h2 {
+  font-size: var(--t-lg);
+  font-weight: 600;
+  margin: var(--space-2xl) 0 var(--space-sm);
+}
+
+.prose p,
+.prose ul {
+  margin: 0 0 var(--space-md);
+}
+
+.prose ul {
+  padding-left: var(--space-xl);
+}
+
+.prose li {
+  margin-bottom: var(--space-xs);
+}
+
+.prose .lead {
+  font-size: var(--t-lg);
+  color: var(--text-secondary);
+}
+
+.prose a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.prose a:hover {
+  color: var(--accent-hover);
+}
+
+/* Toast notifications (errors.js) */
+#toast-root {
+  position: fixed;
+  bottom: var(--space-lg);
+  right: var(--space-lg);
+  display: flex;
+  flex-direction: column-reverse;
+  gap: var(--space-sm);
+  z-index: 1000;
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  background: var(--surface);
+  color: var(--text);
+  padding: var(--space-md) var(--space-lg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  max-width: 380px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  font-size: var(--t-sm);
+  transition: opacity var(--dur-med) var(--ease-out);
+}
+
+.toast-warn  { border-color: var(--warn); }
+.toast-error { border-color: var(--danger); }
+
+.toast-close {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: var(--t-lg);
+  line-height: 1;
+  padding: 0 var(--space-xs);
+  margin-left: auto;
+}
+
+.toast-close:hover {
+  color: var(--text);
+  background-color: transparent;
+}
+
+/* --- Queue view (queueView.js) --- */
+#queue-view {
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  gap: var(--space-lg);
+  padding: var(--space-xl);
+  align-items: start;
+}
+/* Empty state takes the whole row */
+#queue-view .queue-empty { grid-column: 1 / -1; }
+
+.queue-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(160px, 100%), 220px));
+  gap: var(--space-md);
+  justify-content: start;
+}
+
+.queue-thumb {
+  position: relative;
+  display: block;
+  padding: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+  aspect-ratio: 1;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.queue-thumb:hover { border-color: var(--border-strong); }
+.queue-thumb.is-active { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+.queue-thumb img {
+  width: 100%; height: 100%;
+  object-fit: contain;
+  display: block;
+  background: var(--surface-2);
+}
+
+.queue-thumb-remove {
+  position: absolute;
+  top: var(--space-sm); right: var(--space-sm);
+  width: 24px; height: 24px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  display: grid; place-items: center;
+  font-size: var(--t-md);
+  line-height: 1;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.queue-thumb:hover .queue-thumb-remove,
+.queue-thumb-remove:focus-visible {
+  opacity: 1;
+}
+
+.queue-empty {
+  display: grid;
+  place-items: center;
+  min-height: 50vh;
+  padding: var(--space-2xl);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-card);
+  margin: var(--space-xl);
+}
+
+.queue-empty p {
+  color: var(--text-muted);
+  font-size: var(--t-md);
+  text-align: center;
+}
+
+.queue-empty button.text-link {
+  background: none;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  padding: 0;
+}
+
+body.is-drag-active::after {
+  content: '';
+  position: fixed; inset: 0;
+  pointer-events: none;
+  background: var(--surface);
+  opacity: 0.15;
+  z-index: 999;
+}
+
+/* --- Editor view (editor.js + render/previewRenderer.js) --- */
+
+/* When the editor is visible, let it fill the workspace edge to edge. The
+   queue view keeps the default padded layout. */
+main#workspace:has(> #editor-view:not([hidden])) {
+  padding: 0;
+}
+
+#editor-view {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  grid-template-columns: 1fr 320px;
+  grid-template-areas:
+    "toolbar toolbar"
+    "canvas  panel";
+  height: calc(100vh - 56px);
+  min-height: 0;
+}
+/* `display: grid` above would override the UA stylesheet's [hidden] rule, so
+   restore the expected behavior explicitly. Same for queue-view. */
+.view[hidden], #queue-view[hidden], #editor-view[hidden] { display: none !important; }
+
+.editor-toolbar {
+  grid-area: toolbar;
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-wrap: wrap;
+}
+.editor-toolbar button[data-tool],
+.editor-toolbar #undo-btn,
+.editor-toolbar #redo-btn,
+.editor-toolbar #back-to-queue {
+  flex: 0 0 auto;
+}
+.editor-toolbar button[data-tool] {
+  font-size: var(--t-md);
+  width: 36px; height: 36px;
+  display: grid; place-items: center;
+}
+.editor-toolbar button[data-tool].is-active {
+  background: var(--surface-2);
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+.editor-toolbar .divider {
+  width: 1px;
+  height: 24px;
+  background: var(--border);
+  margin: 0 var(--space-xs);
+}
+.editor-toolbar .spacer { flex: 1; }
+
+.canvas-frame {
+  grid-area: canvas;
+  position: relative;
+  display: grid;
+  place-items: center;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.canvas-frame canvas {
+  display: block;
+  max-width: 100%; max-height: 100%;
+}
+#base-canvas, #overlay-canvas {
+  position: absolute;
+  /* Suppress browser pan/zoom gestures so tools own touch input. The
+     pointer.js helper sets this dynamically per-element on attach; the CSS
+     here is a defense-in-depth measure for canvases that aren't wired via
+     attachPointer (e.g. before a tool activates). */
+  touch-action: none;
+}
+#overlay-canvas {
+  pointer-events: none; /* tools will enable as needed in later phases */
+}
+.zoom-controls {
+  position: absolute;
+  bottom: var(--space-md);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: var(--space-xs);
+  background: var(--surface);
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  align-items: center;
+}
+.zoom-controls button, .zoom-controls select {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  padding: var(--space-xs) var(--space-sm);
+  font: inherit;
+  font-size: var(--t-sm);
+  cursor: pointer;
+}
+.zoom-controls .zoom-readout {
+  font-variant-numeric: tabular-nums;
+  min-width: 4ch;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: var(--t-sm);
+}
+
+.editor-panel {
+  grid-area: panel;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  overflow-y: auto;
+  padding: var(--space-md);
+}
+.editor-panel details {
+  border-bottom: 1px solid var(--border);
+  padding: var(--space-md) 0;
+}
+.editor-panel details:last-child { border-bottom: none; }
+.editor-panel summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: var(--t-sm);
+  padding: var(--space-xs) 0;
+  list-style: none;
+}
+.editor-panel summary::-webkit-details-marker { display: none; }
+.editor-panel summary::after {
+  content: '▾';
+  float: right;
+  color: var(--text-muted);
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.editor-panel details:not([open]) summary::after {
+  transform: rotate(-90deg);
+}
+
+/* --- Side-panel tool / resize controls (Phase 4) --- */
+
+.editor-panel .panel-body {
+  padding: var(--space-sm) 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+.editor-panel .panel-heading {
+  margin: 0;
+  font-size: var(--t-sm);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.editor-panel .crop-row,
+.editor-panel .resize-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  font-size: var(--t-sm);
+}
+.editor-panel .crop-row select,
+.editor-panel .resize-row select,
+.editor-panel .crop-row input[type="text"],
+.editor-panel .resize-row input[type="number"] {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: var(--t-sm);
+  min-width: 0;
+  flex: 0 1 60%;
+}
+.editor-panel .crop-actions {
+  display: flex;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+.editor-panel .crop-actions button {
+  flex: 1;
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-control);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-sm);
+}
+.editor-panel .crop-actions button.btn-primary {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+}
+.editor-panel .resize-readout {
+  font-size: var(--t-sm);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.editor-panel .rotate-group,
+.editor-panel .flip-group {
+  display: flex;
+  gap: var(--space-sm);
+}
+.editor-panel .rotate-group button,
+.editor-panel .flip-group button {
+  flex: 1;
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-control);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-sm);
+}
+.editor-panel .flip-group button.is-active {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+}
+.editor-panel .rotate-slider {
+  width: 100%;
+}
+.editor-panel .rotate-readout {
+  font-size: var(--t-sm);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Adjust panel (Phase 5) --- */
+
+.adjust-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.preset-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-sm);
+  align-items: center;
+  padding: var(--space-sm) 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--space-sm);
+}
+.preset-row span {
+  font-size: var(--t-sm);
+  color: var(--text-secondary);
+}
+.preset-row select {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: var(--t-sm);
+  min-width: 0;
+}
+
+.adjust-row {
+  display: grid;
+  grid-template-columns: 80px 1fr 4ch auto;
+  gap: var(--space-sm);
+  align-items: center;
+  padding: var(--space-xs) 0;
+}
+.adjust-row label { font-size: var(--t-sm); color: var(--text-secondary); }
+.adjust-row .adjust-slider-wrap { display: flex; align-items: center; min-width: 0; }
+.adjust-row input[type="range"] { width: 100%; }
+.adjust-row .readout {
+  font-variant-numeric: tabular-nums;
+  font-size: var(--t-sm);
+  color: var(--text-muted);
+  text-align: right;
+  min-width: 4ch;
+}
+.adjust-row .reset-btn {
+  width: 24px; height: 24px;
+  padding: 0;
+  font-size: var(--t-sm);
+  color: var(--text-muted);
+  background: transparent;
+}
+.adjust-row .reset-btn:hover { color: var(--text); background: transparent; }
+.adjust-reset-all {
+  margin-top: var(--space-md);
+  display: block;
+  align-self: flex-start;
+  padding: var(--space-xs) var(--space-md);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-control);
+  font-size: var(--t-sm);
+}
+.adjust-reset-all:hover { background: var(--surface); border-color: var(--border-strong); }
+
+/* --- Eyedropper / chromakey panel (Phase 6) --- */
+
+.editor-panel .eyedropper-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: var(--t-sm);
+}
+.editor-panel .eyedropper-color-row {
+  justify-content: flex-start;
+}
+.editor-panel .eyedropper-swatch {
+  display: inline-block;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--border);
+  background: transparent;
+  flex: 0 0 auto;
+}
+.editor-panel .eyedropper-hex {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: var(--t-sm);
+  flex: 1 1 auto;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+.editor-panel .eyedropper-tol-row {
+  display: grid;
+  grid-template-columns: 80px 1fr 4ch;
+  gap: var(--space-sm);
+  align-items: center;
+}
+.editor-panel .eyedropper-tol-row span:first-child {
+  color: var(--text-secondary);
+}
+.editor-panel .eyedropper-tolerance {
+  width: 100%;
+}
+.editor-panel .eyedropper-tol-readout {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  text-align: right;
+  min-width: 4ch;
+}
+.editor-panel .eyedropper-actions {
+  display: flex;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+.editor-panel .eyedropper-actions button {
+  flex: 1;
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-control);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-sm);
+}
+.editor-panel .eyedropper-actions button.btn-primary {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+}
+
+/* --- Text tool panel (Phase 7A) --- */
+
+.editor-panel .text-tool-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+.editor-panel .text-empty {
+  color: var(--text-muted);
+  font-size: var(--t-sm);
+  margin: 0;
+}
+.editor-panel .text-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+.editor-panel .text-row {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: var(--space-sm);
+  align-items: center;
+  font-size: var(--t-sm);
+}
+.editor-panel .text-row > span {
+  color: var(--text-secondary);
+}
+.editor-panel .text-text-row {
+  align-items: start;
+}
+.editor-panel .text-input {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: var(--t-sm);
+  resize: vertical;
+  min-height: 60px;
+}
+.editor-panel .text-font,
+.editor-panel .text-weight {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: var(--t-sm);
+}
+.editor-panel .text-size {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: var(--t-sm);
+  font-variant-numeric: tabular-nums;
+}
+.editor-panel .text-color {
+  width: 100%;
+  min-height: 32px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
+  cursor: pointer;
+}
+.editor-panel .text-align-row {
+  align-items: center;
+}
+.editor-panel .text-align-group {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: var(--space-xs);
+}
+.editor-panel .text-align-group button {
+  padding: var(--space-xs);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: var(--t-md);
+  cursor: pointer;
+}
+.editor-panel .text-align-group button.is-active {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+}
+.editor-panel .text-delete {
+  margin-top: var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: var(--t-sm);
+  cursor: pointer;
+}
+.editor-panel .text-delete:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+/* --- Overlays panel (Phase 7A) --- */
+
+.overlays-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+.overlay-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: var(--space-sm);
+  align-items: center;
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  cursor: pointer;
+  background: var(--surface);
+}
+.overlay-row:hover { background: var(--surface-2); }
+.overlay-row.is-active {
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+.overlay-row.is-dragging { opacity: 0.5; }
+.overlay-row.is-drop-target {
+  border-style: dashed;
+  border-color: var(--accent);
+}
+.overlay-row .overlay-icon {
+  width: 24px; height: 24px;
+  display: grid; place-items: center;
+  font-size: var(--t-md);
+  color: var(--text-muted);
+}
+.overlay-row .overlay-label {
+  font-size: var(--t-sm);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.overlay-row .overlay-delete {
+  width: 24px; height: 24px;
+  padding: 0;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: var(--t-md);
+  line-height: 1;
+}
+.overlay-row .overlay-delete:hover { color: var(--danger); }
+.overlay-empty {
+  color: var(--text-muted);
+  font-size: var(--t-sm);
+  padding: var(--space-md);
+  text-align: center;
+  margin: 0;
+}
+
+/* --- Brush tool panel (Phase 7B) --- */
+
+.editor-panel .brush-tool-panel,
+.editor-panel .shape-tool-panel,
+.editor-panel .redact-tool-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+.editor-panel .brush-row,
+.editor-panel .shape-row,
+.editor-panel .redact-row {
+  display: grid;
+  grid-template-columns: 80px 1fr auto;
+  gap: var(--space-sm);
+  align-items: center;
+  font-size: var(--t-sm);
+}
+/* display:grid above would override the UA [hidden] rule — restore it. */
+.editor-panel .brush-row[hidden],
+.editor-panel .shape-row[hidden],
+.editor-panel .redact-row[hidden] { display: none; }
+.editor-panel .brush-row > span:first-child,
+.editor-panel .shape-row > span:first-child,
+.editor-panel .redact-row > span:first-child {
+  color: var(--text-secondary);
+}
+.editor-panel .brush-color,
+.editor-panel .shape-stroke,
+.editor-panel .shape-fill {
+  width: 100%;
+  min-height: 32px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
+  cursor: pointer;
+}
+.editor-panel .brush-size,
+.editor-panel .shape-stroke-width,
+.editor-panel .redact-strength {
+  width: 100%;
+}
+.editor-panel .brush-size-readout,
+.editor-panel .shape-stroke-width-readout,
+.editor-panel .redact-strength-readout {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  text-align: right;
+  min-width: 3ch;
+}
+.editor-panel .brush-swatch {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+.editor-panel .brush-hint,
+.editor-panel .shape-hint,
+.editor-panel .redact-hint {
+  color: var(--text-muted);
+  font-size: var(--t-sm);
+  margin: 0;
+}
+
+/* --- Shape tool panel (Phase 7B) --- */
+.editor-panel .shape-kind-group {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-xs);
+  grid-column: 2 / 4;
+}
+.editor-panel .shape-kind-group button {
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: var(--t-sm);
+  cursor: pointer;
+}
+.editor-panel .shape-kind-group button.is-active {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+}
+.editor-panel .shape-fill-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+.editor-panel .shape-fill-group input[type="color"] {
+  flex: 1;
+  min-height: 32px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
+  cursor: pointer;
+}
+.editor-panel .shape-fill-group input[type="color"]:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* --- Redact tool panel (Phase 7B) --- */
+.editor-panel .redact-mode-group {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-xs);
+  grid-column: 2 / 4;
+}
+.editor-panel .redact-mode-group button {
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: var(--t-sm);
+  cursor: pointer;
+}
+.editor-panel .redact-mode-group button.is-active {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+}
+
+/* --- Export panel (Phase 9) --- */
+.editor-panel .export-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+.editor-panel .export-panel .format-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-sm);
+}
+.editor-panel .export-panel .format-chip {
+  padding: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  text-align: center;
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-sm);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.editor-panel .export-panel .format-chip:hover {
+  background: var(--surface-2);
+}
+.editor-panel .export-panel .format-chip.is-active {
+  border-color: var(--accent);
+  background: var(--surface-2);
+  color: var(--accent);
+  /* A box-shadow plus the border-color gives a stronger active cue than
+     color alone — Dan is colorblind so two-channel signaling matters. */
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.editor-panel .export-panel .quality-row {
+  display: grid;
+  grid-template-columns: 80px 1fr 4ch;
+  gap: var(--space-sm);
+  align-items: center;
+  font-size: var(--t-sm);
+}
+.editor-panel .export-panel .quality-row[hidden] {
+  display: none;
+}
+.editor-panel .export-panel .quality-row > span:first-child {
+  color: var(--text-secondary);
+}
+.editor-panel .export-panel .quality-slider {
+  width: 100%;
+}
+.editor-panel .export-panel .quality-readout {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  text-align: right;
+}
+.editor-panel .export-panel .filename-row {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: var(--space-sm);
+  align-items: center;
+  font-size: var(--t-sm);
+}
+.editor-panel .export-panel .filename-row > span {
+  color: var(--text-secondary);
+}
+.editor-panel .export-panel .filename-template {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: var(--t-sm);
+  min-width: 0;
+}
+.editor-panel .export-panel .filename-help {
+  margin: 0;
+  font-size: var(--t-xs);
+  color: var(--text-muted);
+}
+.editor-panel .export-panel .output-dims {
+  font-size: var(--t-sm);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.editor-panel .export-panel .download-btn {
+  margin-top: var(--space-sm);
+  background: var(--accent);
+  color: var(--accent-contrast);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: var(--t-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+.editor-panel .export-panel .download-btn:hover {
+  background: var(--accent-hover, var(--accent));
+  filter: brightness(0.95);
+}
+.editor-panel .export-panel .download-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* --- Batch panel + thumb badge (queueView.js, Phase 10) --- */
+
+.batch-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--space-md);
+  position: sticky;
+  top: calc(56px + var(--space-md));
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  /* Cap height so the panel scrolls internally on tall screens with many
+     open sections instead of pushing the page. */
+  max-height: calc(100vh - 56px - var(--space-2xl));
+  overflow-y: auto;
+}
+
+.batch-panel-heading {
+  margin: 0 0 var(--space-xs);
+  font-size: var(--t-md);
+  font-weight: 600;
+}
+
+.batch-section {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: var(--space-sm);
+}
+.batch-section:last-child { border-bottom: none; }
+
+.batch-section summary {
+  font-weight: 600;
+  font-size: var(--t-sm);
+  cursor: pointer;
+  padding: var(--space-xs) 0;
+  list-style: none;
+}
+.batch-section summary::-webkit-details-marker { display: none; }
+.batch-section summary::after {
+  content: '▾';
+  float: right;
+  color: var(--text-muted);
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.batch-section:not([open]) summary::after {
+  transform: rotate(-90deg);
+}
+
+.batch-section-body {
+  padding: var(--space-sm) 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.batch-row {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: var(--space-sm);
+  align-items: center;
+  font-size: var(--t-sm);
+}
+.batch-row > span:first-child { color: var(--text-secondary); }
+.batch-row--tol {
+  grid-template-columns: 80px 1fr 4ch;
+}
+
+.batch-panel select,
+.batch-panel input[type="number"],
+.batch-panel input[type="text"] {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: var(--t-sm);
+  min-width: 0;
+}
+
+.batch-panel input[type="range"] {
+  width: 100%;
+}
+
+.batch-panel input[type="color"] {
+  width: 100%;
+  min-height: 32px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
+  cursor: pointer;
+}
+
+.batch-apply {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border: 1px solid var(--accent);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: var(--t-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+.batch-apply:hover { background: var(--accent-hover); }
+.batch-apply:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.batch-rotate-group {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-xs);
+}
+.batch-rotate-group button {
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: var(--t-sm);
+  cursor: pointer;
+}
+.batch-rotate-group button:hover {
+  border-color: var(--border-strong);
+}
+
+.batch-adjust-row {
+  display: grid;
+  grid-template-columns: 80px 1fr 4ch;
+  gap: var(--space-sm);
+  align-items: center;
+  font-size: var(--t-sm);
+}
+.batch-adjust-label { color: var(--text-secondary); }
+.batch-adjust-readout {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  text-align: right;
+}
+
+.batch-chroma-tol-readout {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  text-align: right;
+}
+
+.batch-bg-hint {
+  margin: 0;
+  font-size: var(--t-xs);
+  color: var(--text-muted);
+}
+
+.batch-format-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-sm);
+}
+.batch-format-chip {
+  padding: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  text-align: center;
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-sm);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.batch-format-chip:hover { background: var(--surface-2); }
+.batch-format-chip.is-active {
+  border-color: var(--accent);
+  background: var(--surface-2);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.batch-quality-row {
+  display: grid;
+  grid-template-columns: 80px 1fr 4ch;
+  gap: var(--space-sm);
+  align-items: center;
+  font-size: var(--t-sm);
+}
+.batch-quality-row[hidden] { display: none; }
+.batch-quality-row > span:first-child { color: var(--text-secondary); }
+.batch-quality-readout {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  text-align: right;
+}
+
+.batch-filename-row {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: var(--space-sm);
+  align-items: center;
+  font-size: var(--t-sm);
+}
+.batch-filename-row > span { color: var(--text-secondary); }
+
+.batch-filename-help {
+  margin: 0;
+  font-size: var(--t-xs);
+  color: var(--text-muted);
+}
+
+.batch-export-readout {
+  margin: 0;
+  font-size: var(--t-sm);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.export-queue-btn {
+  font-size: var(--t-md);
+  padding: var(--space-md);
+}
+
+/* --- Thumb (batch) badge --- */
+.queue-thumb-batch-badge {
+  position: absolute;
+  bottom: var(--space-sm);
+  right: var(--space-sm);
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-size: var(--t-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: var(--radius-pill);
+  pointer-events: none;
+}
+
+/* --- Mobile chrome injected by js/bottomSheet.js -------------------------
+   The trigger button and tab strip exist in the DOM on every viewport so
+   tests don't need to special-case desktop vs mobile, but their visual
+   chrome only makes sense at <=768 px. Default state: hidden. The mobile
+   media query overrides display below. */
+.editor-panel-trigger {
+  display: none;
+}
+.editor-panel-tabs {
+  display: none;
+}
+
+/* --- Responsive: mobile (<=768px) ----------------------------------------
+   Phase 13 turns the editor view into a single-column layout with the side
+   panel reborn as a bottom sheet, and bumps the queue view to one column.
+   The bottom-sheet markup is injected by js/bottomSheet.js; the .editor-panel
+   element itself is reused (no separate DOM tree on mobile), so its desktop
+   stylesheet remains the source of truth for inner-control styling.            */
+@media (max-width: 768px) {
+  /* --- Queue view: single column, batch panel below the grid ----------- */
+  #queue-view {
+    grid-template-columns: 1fr;
+    gap: var(--space-md);
+    padding: var(--space-md);
+  }
+  .batch-panel {
+    position: static;
+    max-height: none;
+  }
+  .queue-grid {
+    grid-template-columns: repeat(auto-fill, minmax(min(120px, 100%), 1fr));
+  }
+
+  /* --- Editor view: single column, panel becomes a bottom sheet -------- */
+  #editor-view {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "toolbar"
+      "canvas";
+  }
+  /* The desktop panel column is gone — the panel takes its place fixed at
+     the bottom of the viewport, hidden by default. */
+  .editor-panel {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 50;
+    max-height: 70vh;
+    transform: translateY(100%);
+    transition: transform var(--dur-med) var(--ease-out);
+    background: var(--surface);
+    border-left: none;
+    border-top: 1px solid var(--border);
+    border-radius: var(--radius-card) var(--radius-card) 0 0;
+    display: flex;
+    flex-direction: column;
+    /* overflow hidden so the rounded top doesn't get clipped by the inner
+       scroll container. Content scrolls inside .editor-panel-content. */
+    overflow: hidden;
+    padding: 0;
+  }
+  .editor-panel.is-open {
+    transform: translateY(0);
+  }
+  /* Drag handle: a small horizontal bar at the top of the sheet that doubles
+     as the dismiss-by-pointer-drag affordance. */
+  .editor-panel::before {
+    content: '';
+    display: block;
+    width: 48px;
+    height: 4px;
+    margin: var(--space-sm) auto var(--space-xs);
+    border-radius: var(--radius-pill);
+    background: var(--border-strong);
+    flex: 0 0 auto;
+  }
+
+  /* Floating trigger button (injected by bottomSheet.js). Hidden on desktop
+     by default — only shown inside this media query. */
+  .editor-panel-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
+    position: fixed;
+    bottom: var(--space-lg);
+    right: var(--space-lg);
+    z-index: 40;
+    padding: var(--space-md) var(--space-lg);
+    background: var(--accent);
+    color: var(--accent-contrast);
+    border: 1px solid var(--accent-hover);
+    border-radius: var(--radius-pill);
+    font: inherit;
+    font-weight: 600;
+  }
+  .editor-panel-trigger:hover { background: var(--accent-hover); }
+
+  /* Bottom-sheet tabs: row of 5 chips that replace the <details> stack as
+     the section selector. Horizontal-scroll if the labels overflow on a
+     narrow phone. */
+  .editor-panel-tabs {
+    display: flex;
+    overflow-x: auto;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+  }
+  .editor-panel-tab {
+    flex: 1 0 auto;
+    padding: var(--space-md);
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: var(--t-sm);
+    cursor: pointer;
+    /* Reset our global :where(button) padding so the bottom-border alignment
+       lines up with the tab row baseline. */
+    border-radius: 0;
+  }
+  .editor-panel-tab:hover { background: transparent; color: var(--text); }
+  .editor-panel-tab.is-active {
+    color: var(--text);
+    border-bottom-color: var(--accent);
+    /* Secondary cue beyond hue so the active state survives Dan's
+       colorblindness — weight bump in addition to the border. */
+    font-weight: 600;
+  }
+
+  /* Scroll container for the active tab's section body. */
+  .editor-panel-content {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: var(--space-md);
+  }
+
+  /* Hide the desktop <details> chrome inside the panel; we promote the
+     active section's body via a class swap from JS. */
+  .editor-panel details {
+    border: none;
+    padding: 0;
+  }
+  .editor-panel details summary { display: none; }
+  .editor-panel details:not(.is-active-tab) { display: none; }
+
+  /* Top tool strip: horizontal scroll instead of wrapping. Reads better
+     than wrapped chips on narrow viewports. */
+  .editor-toolbar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* --- Touch device: enlarge hit targets regardless of viewport --------------
+   `pointer: coarse` is the only reliable indicator we have for fingertips on
+   the screen — laptop trackpads and mice register as `fine`. Big tablets
+   running this site land here too, which is exactly what we want: 44 CSS
+   pixels is the minimum recommended touch target. We use min-width / min-height
+   rather than fixed sizing so existing layouts stay intact where they're
+   already larger. */
+@media (pointer: coarse) {
+  .editor-toolbar button { min-width: 44px; min-height: 44px; }
+  .editor-panel button,
+  .editor-panel select,
+  .editor-panel input[type="range"] {
+    min-height: 44px;
+  }
+  .editor-panel-tab { min-height: 44px; }
+  .editor-panel-trigger { min-height: 44px; }
+  /* Slightly larger queue × button (desktop default is 24). And: on touch
+     there is no hover, so it must be visible at all times instead of
+     fading in on hover. */
+  .queue-thumb-remove {
+    width: 36px;
+    height: 36px;
+    opacity: 1;
+  }
+  .topbar button,
+  .topbar a {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  footer button,
+  footer a {
+    min-height: 44px;
+    padding: var(--space-sm) var(--space-md);
+  }
+}
+
+/* --- Batch progress dialog (Phase 10) --- */
+dialog.batch-progress-dialog {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--space-xl);
+  max-width: 480px;
+  width: min(90vw, 480px);
+  font-family: inherit;
+}
+dialog.batch-progress-dialog::backdrop {
+  background: rgb(0 0 0 / 0.45);
+}
+.batch-progress-title {
+  margin: 0 0 var(--space-md);
+  font-size: var(--t-lg);
+  font-weight: 600;
+}
+.batch-progress-bar {
+  width: 100%;
+  height: 10px;
+  margin-bottom: var(--space-sm);
+}
+.batch-progress-status {
+  margin: 0 0 var(--space-md);
+  font-size: var(--t-sm);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.batch-progress-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 var(--space-md);
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+.batch-progress-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--space-sm);
+  align-items: center;
+  padding: var(--space-xs) var(--space-sm);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--t-sm);
+}
+.batch-progress-row:last-child { border-bottom: none; }
+.batch-progress-row.is-encoding { background: var(--surface-2); }
+.batch-progress-row.is-done .batch-progress-row-status { color: var(--accent); }
+.batch-progress-row.is-failed { color: var(--danger); }
+.batch-progress-row.is-failed .batch-progress-row-status { color: var(--danger); }
+.batch-progress-row-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.batch-progress-row-status {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+.batch-progress-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+.batch-progress-cancel {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: var(--t-sm);
+  cursor: pointer;
+}
+.batch-progress-cancel:hover {
+  border-color: var(--border-strong);
+}
+
+/* --- Batch confirm dialog --- */
+dialog.batch-confirm-dialog {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--space-xl);
+  max-width: 420px;
+  font-family: inherit;
+}
+dialog.batch-confirm-dialog::backdrop { background: rgb(0 0 0 / 0.45); }
+dialog.batch-confirm-dialog h2 {
+  margin: 0 0 var(--space-md);
+  font-size: var(--t-lg);
+  font-weight: 600;
+}
+dialog.batch-confirm-dialog p {
+  margin: 0 0 var(--space-lg);
+  color: var(--text-secondary);
+}
+.batch-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+}
+.batch-confirm-actions button {
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-sm);
+  cursor: pointer;
+}
+.batch-confirm-actions button.btn-primary {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+}
+
+/* --- Oversize dialog (importer.js) --- */
+dialog.oversize-dialog {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--space-xl);
+  max-width: 420px;
+  font-family: inherit;
+}
+
+dialog.oversize-dialog::backdrop {
+  background: rgb(0 0 0 / 0.45);
+}
+
+dialog.oversize-dialog h2 {
+  margin: 0 0 var(--space-md);
+  font-size: var(--t-lg);
+  font-weight: 600;
+}
+
+dialog.oversize-dialog p {
+  margin: 0 0 var(--space-lg);
+  color: var(--text-secondary);
+}
+
+dialog.oversize-dialog code {
+  background: var(--surface-2);
+  padding: 0 var(--space-xs);
+  border-radius: 2px;
+  font-size: 0.95em;
+}
+
+.oversize-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+}
+
+/* --- Canvas progress overlay (long-running canvas-bound ops) ---
+   A centred translucent card overlaid on the editor canvas. Used for
+   bg-remove today; conceptually reusable for any heavy op that wants a
+   prominent in-canvas indicator instead of relying on the side panel. */
+.canvas-progress-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  /* Sits above both canvases. zoom-controls live in the same frame but
+     anchor to the bottom — they don't overlap with the centered card. */
+  z-index: 20;
+  pointer-events: auto;
+  /* Soft scrim so the underlying canvas content is dimmed but still
+     glimpsable behind the card. */
+  background: light-dark(rgb(255 255 255 / 0.45), rgb(0 0 0 / 0.45));
+}
+.canvas-progress-overlay[hidden] { display: none; }
+.canvas-progress-card {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--space-xl);
+  width: min(88vw, 360px);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  box-shadow: 0 8px 32px rgb(0 0 0 / 0.18);
+}
+.canvas-progress-title {
+  margin: 0;
+  font-size: var(--t-md);
+  font-weight: 600;
+  color: var(--text);
+}
+.canvas-progress-bar {
+  --progress: 0%;
+  position: relative;
+  height: 8px;
+  width: 100%;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+.canvas-progress-bar::before {
+  content: '';
+  display: block;
+  height: 100%;
+  width: var(--progress);
+  background: var(--accent);
+  border-radius: inherit;
+  transition: width var(--dur-med) var(--ease-out);
+}
+@media (prefers-reduced-motion: reduce) {
+  .canvas-progress-bar::before { transition: none; }
+}
+.canvas-progress-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  font-size: var(--t-sm);
+  color: var(--text-secondary);
+}
+.canvas-progress-stage {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.canvas-progress-percent {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  min-width: 4ch;
+  text-align: right;
+}
+
+/* --- Background-removal consent dialog (Phase 11) --- */
+dialog.bgremove-consent-dialog {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--space-xl);
+  max-width: 480px;
+  width: min(92vw, 480px);
+  font-family: inherit;
+}
+dialog.bgremove-consent-dialog::backdrop {
+  background: rgb(0 0 0 / 0.45);
+}
+dialog.bgremove-consent-dialog h2 {
+  margin: 0 0 var(--space-md);
+  font-size: var(--t-lg);
+  font-weight: 600;
+}
+dialog.bgremove-consent-dialog p {
+  margin: 0 0 var(--space-md);
+  color: var(--text-secondary);
+  font-size: var(--t-sm);
+  line-height: 1.5;
+}
+dialog.bgremove-consent-dialog p.bgremove-consent-license {
+  font-size: var(--t-xs);
+  color: var(--text-muted);
+  margin-bottom: var(--space-lg);
+}
+.bgremove-consent-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+}
+.bgremove-consent-actions button {
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-sm);
+  cursor: pointer;
+}
+.bgremove-consent-actions button.btn-primary {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+}
+
+/* --- Background-removal side panel --- */
+.bg-remove-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+.bg-remove-help {
+  margin: 0;
+  font-size: var(--t-sm);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+.bg-remove-status {
+  margin: 0;
+  font-size: var(--t-sm);
+  color: var(--text-muted);
+}
+.bg-remove-apply {
+  align-self: flex-start;
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-sm);
+  cursor: pointer;
+}
+.bg-remove-apply.btn-primary {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+}
+.bg-remove-apply:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.bg-remove-progress {
+  margin: 0;
+  font-size: var(--t-xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.bg-remove-undo-hint {
+  margin: var(--space-sm) 0 0;
+  font-size: var(--t-xs);
+  color: var(--text-muted);
+}
+
+/* --- Language picker popover ------------------------------------------- */
+.language-popover {
+  position: fixed;
+  z-index: 1100;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--space-xs);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 220px;
+  max-height: 70vh;
+  overflow-y: auto;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
+}
+.language-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  background: transparent;
+  border: none;
+  color: var(--text);
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-size: var(--t-sm);
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}
+.language-row:hover { background: var(--surface-2); }
+.language-row.is-active { background: var(--surface-2); font-weight: 600; }
+.language-row img {
+  width: 20px;
+  height: 14px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  object-fit: cover;
+}
+/* RTL: when <html dir="rtl">, the popover should anchor under the button's
+   bottom-LEFT corner instead. We override the JS-set inline `right` style
+   via a class on the popover when set, or simply mirror with logical
+   properties here. The JS sets right/top inline; for RTL we keep right
+   inline (Arabic UIs still expect the menu under the trigger, just mirrored
+   when needed). */
+[dir="rtl"] .language-row {
+  text-align: right;
+}
+
+/* --- Settings popover (Phase 12B) -------------------------------------- */
+.settings-popover {
+  position: fixed;
+  z-index: 1100;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-width: 320px;
+  max-width: 380px;
+  max-height: 80vh;
+  overflow-y: auto;
+  font-size: var(--t-sm);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
+}
+.settings-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--space-md);
+  align-items: center;
+}
+.settings-row label {
+  color: var(--text-secondary);
+}
+.settings-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  /* Anchor the checkbox at the row's right edge so the eye can read down
+     the column even with a long label that wraps. */
+  justify-self: end;
+}
+.settings-row select,
+.settings-row input[type="range"] {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: var(--t-sm);
+  padding: var(--space-xs) var(--space-sm);
+  min-width: 0;
+}
+.settings-row input[type="range"] {
+  min-width: 140px;
+  padding: 0;
+}
+.settings-divider {
+  height: 1px;
+  background: var(--border);
+  margin: var(--space-xs) 0;
+}
+.settings-revert-btn {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-control);
+  align-self: flex-end;
+  font: inherit;
+  font-size: var(--t-sm);
+  cursor: pointer;
+}
+.settings-revert-btn:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+/* --- Privacy panel modal (Phase 12B) ------------------------------------ */
+.privacy-panel-dialog {
+  max-width: min(720px, 90vw);
+  max-height: 85vh;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  color: var(--text);
+  /* The browser positions <dialog> via offsetTop/Left; we want a margin so
+     keyboard-focus on the close button doesn't run into the viewport edge. */
+  margin: auto;
+  /* Dialog itself never scrolls — only the inner .prose does. Otherwise both
+     the dialog and the prose end up with scrollbars when content overflows
+     (visible as two stacked tracks in the top-right corner). */
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.privacy-panel-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.5);
+}
+.privacy-panel-dialog .prose {
+  padding: var(--space-2xl);
+  max-width: 65ch;
+  margin: 0 auto;
+  overflow-y: auto;
+  /* Flex inside the dialog handles height — no fixed max-height needed. */
+  flex: 1;
+  min-height: 0;
+  /* Make sure links inside list items inherit the prose anchor color. */
+  position: relative;
+}
+.privacy-panel-dialog .dialog-close {
+  position: absolute;
+  top: var(--space-md);
+  right: var(--space-md);
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  font-size: var(--t-xl);
+  line-height: 1;
+  color: var(--text-muted);
+  cursor: pointer;
+  /* Sit above the article content so it remains clickable when the prose
+     scrolls. */
+  z-index: 1;
+}
+.privacy-panel-dialog .dialog-close:hover {
+  color: var(--text);
+}
+.privacy-panel-dialog .privacy-static-link {
+  margin-top: var(--space-xl);
+  padding-top: var(--space-lg);
+  border-top: 1px solid var(--border);
+  font-size: var(--t-sm);
+  color: var(--text-muted);
+}
+
