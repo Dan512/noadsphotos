@@ -281,3 +281,52 @@ test('text tool: click position maps to expected source coords via canvasToSourc
   expect(Math.abs(pos.x - 100)).toBeLessThan(5);
   expect(Math.abs(pos.y - 50)).toBeLessThan(5);
 });
+
+// Default font size for a NEW text overlay should scale with display zoom
+// so the rendered text is visibly readable regardless of source image
+// size. Two extreme cases:
+//   - small image (~100 px) usually displays at 1× → default ~ TARGET_CSS
+//   - large image (4000 px) usually displays at fit zoom (~0.15×) →
+//     default source size is much larger so the rendered glyphs stay
+//     legible.
+test('text tool: default size on a small image is reasonable', async ({ page }) => {
+  await resetApp(page);
+  const id = await setupEditorWithImage(page, 100, 100);
+  await activateTextTool(page);
+  await clickCanvas(page, 0.5, 0.5);
+
+  const size = await page.evaluate(async (id) => {
+    const { getState } = await import('/js/state.js');
+    const o = getState().images[id].overlays[0];
+    return o.size;
+  }, id);
+  // Should be within the clamp band: [16, 512].
+  expect(size).toBeGreaterThanOrEqual(16);
+  expect(size).toBeLessThanOrEqual(512);
+});
+
+test('text tool: default size on a large image is much larger than on a small one', async ({ page }) => {
+  // Place text on a tiny image first.
+  await resetApp(page);
+  const smallId = await setupEditorWithImage(page, 100, 100);
+  await activateTextTool(page);
+  await clickCanvas(page, 0.5, 0.5);
+  const smallSize = await page.evaluate(async (id) => {
+    const { getState } = await import('/js/state.js');
+    return getState().images[id].overlays[0].size;
+  }, smallId);
+
+  // Now do it again on a much larger image.
+  await resetApp(page);
+  const largeId = await setupEditorWithImage(page, 4000, 4000);
+  await activateTextTool(page);
+  await clickCanvas(page, 0.5, 0.5);
+  const largeSize = await page.evaluate(async (id) => {
+    const { getState } = await import('/js/state.js');
+    return getState().images[id].overlays[0].size;
+  }, largeId);
+
+  // The large-image text should be MUCH larger in source pixels because
+  // it's compensating for the fit-zoom shrink factor.
+  expect(largeSize).toBeGreaterThan(smallSize * 4);
+});

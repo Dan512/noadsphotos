@@ -191,7 +191,10 @@ header.topbar {
   border-bottom: 1px solid var(--border);
 }
 
-.topbar h1 {
+.topbar .wordmark {
+  /* Demoted from <h1> for SEO/a11y: the content <h1> now lives in the queue
+     intro section. Reset <p>'s default vertical margins; keep visual size
+     identical to the prior h1. */
   margin: 0;
   font-size: var(--t-lg);
   font-weight: 600;
@@ -248,7 +251,7 @@ footer {
 }
 
 /* Topbar wordmark link (used on subpages) */
-.topbar h1 a {
+.topbar .wordmark a {
   color: inherit;
   text-decoration: none;
 }
@@ -267,6 +270,41 @@ footer {
 
 .btn-tip:hover {
   background-color: var(--surface-2);
+}
+
+/* The tip button shows two strings — full and short — chosen by viewport
+   width. Both are translated independently via data-i18n so each locale
+   can supply its own short form. */
+.btn-tip .tip-short { display: none; }
+.btn-tip .tip-full  { display: inline; }
+@media (max-width: 480px) {
+  .btn-tip .tip-short { display: inline; }
+  .btn-tip .tip-full  { display: none; }
+}
+
+/* Flag image inside the language toggle button. Sized to match the button's
+   visual weight; subtle border so the flag has a defined edge on any
+   background. */
+#lang-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+#lang-toggle[hidden] { display: none; }
+#lang-toggle .lang-flag {
+  display: block;
+  width: 20px;
+  height: 14px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  object-fit: cover;
+}
+
+/* Theme toggle in the topbar (sun/moon). Match visual weight of the gear and
+   language buttons — same sizing and font scaling. */
+#theme-toggle {
+  font-size: var(--t-md);
+  line-height: 1;
 }
 
 /* View placeholders — filled in later phases */
@@ -447,6 +485,57 @@ footer button:hover {
 .queue-thumb:hover .queue-thumb-remove,
 .queue-thumb-remove:focus-visible {
   opacity: 1;
+}
+
+/* --- Queue intro (empty-state landing copy) ---------------------------- */
+/* Sits ABOVE the drop zone when queue.length === 0. The <h1> here is the
+   single content heading on the page — the topbar wordmark is a <p> so
+   crawlers and screen-readers see exactly one h1. */
+.queue-intro {
+  grid-column: 1 / -1;
+  max-width: 65ch;
+  margin: var(--space-2xl) auto var(--space-xl);
+  padding: 0 var(--space-xl);
+  text-align: left;
+}
+.intro-title {
+  font-size: var(--t-2xl);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  margin: 0 0 var(--space-md);
+  color: var(--text);
+}
+.intro-lead {
+  font-size: var(--t-lg);
+  line-height: 1.5;
+  color: var(--text-secondary);
+  margin: 0 0 var(--space-md);
+}
+.intro-tags {
+  font-size: var(--t-sm);
+  color: var(--text-muted);
+  margin: 0 0 var(--space-xl);
+}
+.intro-features {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: var(--space-sm);
+}
+.intro-features li {
+  font-size: var(--t-md);
+  line-height: 1.4;
+  color: var(--text-secondary);
+  padding-left: var(--space-md);
+  position: relative;
+}
+.intro-features li::before {
+  content: '•';
+  color: var(--accent);
+  position: absolute;
+  left: 0;
+  top: 0;
 }
 
 .queue-empty {
@@ -1531,75 +1620,60 @@ main#workspace:has(> #editor-view:not([hidden])) {
   .queue-grid {
     grid-template-columns: repeat(auto-fill, minmax(min(120px, 100%), 1fr));
   }
+  /* Intro section: tighter rhythm + smaller display heading on phones. */
+  .queue-intro {
+    margin: var(--space-xl) auto var(--space-lg);
+    padding: 0 var(--space-lg);
+  }
+  .intro-title { font-size: var(--t-xl); }
+  .intro-lead  { font-size: var(--t-md); }
 
-  /* --- Editor view: single column, panel becomes a bottom sheet -------- */
+  /* --- Editor view: canvas on top, panel always visible on bottom ----
+     Phase 14: the bottom sheet trigger is gone. The side panel now sits
+     anchored to the bottom 40vh of the viewport at all times; the canvas
+     frame takes the space above it. The image is centered in its frame
+     via the existing `place-items: center` rule. */
   #editor-view {
     grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr 40vh;
     grid-template-areas:
       "toolbar"
-      "canvas";
+      "canvas"
+      "panel";
+    height: calc(100vh - 56px);
   }
-  /* The desktop panel column is gone — the panel takes its place fixed at
-     the bottom of the viewport, hidden by default. */
+  /* Panel is in flow inside the grid — no fixed positioning, no transform,
+     no drag-to-close. Internal scroll keeps overlong content reachable. */
   .editor-panel {
-    position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 50;
-    max-height: 70vh;
-    transform: translateY(100%);
-    transition: transform var(--dur-med) var(--ease-out);
+    grid-area: panel;
+    position: static;
+    transform: none;
+    transition: none;
     background: var(--surface);
     border-left: none;
     border-top: 1px solid var(--border);
-    border-radius: var(--radius-card) var(--radius-card) 0 0;
+    border-radius: 0;
     display: flex;
     flex-direction: column;
-    /* overflow hidden so the rounded top doesn't get clipped by the inner
-       scroll container. Content scrolls inside .editor-panel-content. */
     overflow: hidden;
     padding: 0;
+    max-height: none;
   }
-  .editor-panel.is-open {
-    transform: translateY(0);
-  }
-  /* Drag handle: a small horizontal bar at the top of the sheet that doubles
-     as the dismiss-by-pointer-drag affordance. */
+  /* Drag handle is no longer needed — panel doesn't dismiss. */
   .editor-panel::before {
-    content: '';
-    display: block;
-    width: 48px;
-    height: 4px;
-    margin: var(--space-sm) auto var(--space-xs);
-    border-radius: var(--radius-pill);
-    background: var(--border-strong);
-    flex: 0 0 auto;
+    display: none;
   }
 
-  /* Floating trigger button (injected by bottomSheet.js). Hidden on desktop
-     by default — only shown inside this media query. */
+  /* The floating trigger button is obsolete — the panel is always visible.
+     The DOM node may still be injected by bottomSheet.js for backwards
+     compatibility; we hide it unconditionally on mobile. */
   .editor-panel-trigger {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-sm);
-    position: fixed;
-    bottom: var(--space-lg);
-    right: var(--space-lg);
-    z-index: 40;
-    padding: var(--space-md) var(--space-lg);
-    background: var(--accent);
-    color: var(--accent-contrast);
-    border: 1px solid var(--accent-hover);
-    border-radius: var(--radius-pill);
-    font: inherit;
-    font-weight: 600;
+    display: none !important;
   }
-  .editor-panel-trigger:hover { background: var(--accent-hover); }
 
-  /* Bottom-sheet tabs: row of 5 chips that replace the <details> stack as
-     the section selector. Horizontal-scroll if the labels overflow on a
-     narrow phone. */
+  /* Tab strip is still useful — it switches between the 5 sections that
+     would otherwise stack vertically and require scrolling. Horizontal-
+     scroll if the labels overflow on a narrow phone. */
   .editor-panel-tabs {
     display: flex;
     overflow-x: auto;
@@ -1639,13 +1713,22 @@ main#workspace:has(> #editor-view:not([hidden])) {
   }
 
   /* Hide the desktop <details> chrome inside the panel; we promote the
-     active section's body via a class swap from JS. */
+     active section's body via a class swap from JS. The active details
+     element flexes to fill remaining space and scrolls internally so any
+     long content (sliders, color pickers, export options) stays reachable
+     without scrolling the page. */
   .editor-panel details {
     border: none;
     padding: 0;
   }
   .editor-panel details summary { display: none; }
   .editor-panel details:not(.is-active-tab) { display: none; }
+  .editor-panel details.is-active-tab {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: var(--space-md);
+    -webkit-overflow-scrolling: touch;
+  }
 
   /* Top tool strip: horizontal scroll instead of wrapping. Reads better
      than wrapped chips on narrow viewports. */

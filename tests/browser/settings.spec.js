@@ -35,17 +35,19 @@ test('clicking the gear opens a settings popover', async ({ page }) => {
   await expect(page.locator('.settings-popover')).toBeVisible();
 });
 
-test('settings popover contains all 6 rows + restore button', async ({ page }) => {
+test('settings popover contains all 8 rows + restore button', async ({ page }) => {
   await bootClean(page);
   await page.locator('#settings-toggle').click();
   const rows = page.locator('.settings-popover .settings-row');
-  await expect(rows).toHaveCount(6);
+  await expect(rows).toHaveCount(8);
   const keys = await rows.evaluateAll(els => els.map(el => el.dataset.setting));
   expect(keys.sort()).toEqual([
     'confirmBeforeRemove',
     'defaultExportFormat',
     'defaultQuality',
+    'showLanguagePicker',
     'showOverlayOutlines',
+    'showThemeButton',
     'smoothBrushStrokes',
     'theme',
   ]);
@@ -120,6 +122,8 @@ test('Restore defaults resets every control', async ({ page }) => {
     confirmBeforeRemove: true,
     showOverlayOutlines: true,
     smoothBrushStrokes: false,
+    showThemeButton: false,
+    showLanguagePicker: false,
   });
   // The dark theme should already be on <html> by boot complete.
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
@@ -135,6 +139,8 @@ test('Restore defaults resets every control', async ({ page }) => {
   await expect(page.locator('.settings-popover [data-setting="confirmBeforeRemove"] input')).not.toBeChecked();
   await expect(page.locator('.settings-popover [data-setting="showOverlayOutlines"] input')).not.toBeChecked();
   await expect(page.locator('.settings-popover [data-setting="smoothBrushStrokes"] input')).toBeChecked();
+  await expect(page.locator('.settings-popover [data-setting="showThemeButton"] input')).toBeChecked();
+  await expect(page.locator('.settings-popover [data-setting="showLanguagePicker"] input')).toBeChecked();
 });
 
 test('defaultExportFormat seeds state.export.format on boot', async ({ page }) => {
@@ -190,4 +196,71 @@ test('tampered localStorage falls back to defaults on boot', async ({ page }) =>
     return getState().export.format;
   });
   expect(exported).toBe('png');
+});
+
+// --- Topbar theme toggle (Change 3) --------------------------------------
+
+test('topbar theme toggle is visible by default', async ({ page }) => {
+  await bootClean(page);
+  await expect(page.locator('#theme-toggle')).toBeVisible();
+});
+
+test('theme toggle: clicking flips between light and dark explicit', async ({ page }) => {
+  await bootClean(page);
+  // Force light explicit start so the test is deterministic regardless of
+  // the browser's prefers-color-scheme.
+  await page.evaluate(async () => {
+    const { setSetting } = await import('/js/settings.js');
+    setSetting('theme', 'light');
+  });
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  // Click flips to dark.
+  await page.locator('#theme-toggle').click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  // And again flips back to light.
+  await page.locator('#theme-toggle').click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+});
+
+test('theme toggle: icon reflects current displayed theme', async ({ page }) => {
+  await bootClean(page);
+  await page.evaluate(async () => {
+    const { setSetting } = await import('/js/settings.js');
+    setSetting('theme', 'light');
+  });
+  await expect(page.locator('#theme-toggle')).toHaveText('☀️');
+  await page.evaluate(async () => {
+    const { setSetting } = await import('/js/settings.js');
+    setSetting('theme', 'dark');
+  });
+  await expect(page.locator('#theme-toggle')).toHaveText('🌙');
+});
+
+// --- Topbar visibility toggles (Changes 4 & 5) ---------------------------
+
+test('topbar theme toggle hides when showThemeButton is off', async ({ page }) => {
+  await bootClean(page);
+  await expect(page.locator('#theme-toggle')).toBeVisible();
+  await page.evaluate(async () => {
+    const { setSetting } = await import('/js/settings.js');
+    setSetting('showThemeButton', false);
+  });
+  await expect(page.locator('#theme-toggle')).toBeHidden();
+});
+
+test('topbar language picker hides when showLanguagePicker is off', async ({ page }) => {
+  await bootClean(page);
+  await expect(page.locator('#lang-toggle')).toBeVisible();
+  await page.evaluate(async () => {
+    const { setSetting } = await import('/js/settings.js');
+    setSetting('showLanguagePicker', false);
+  });
+  await expect(page.locator('#lang-toggle')).toBeHidden();
+});
+
+test('settings popover has rows for showThemeButton and showLanguagePicker', async ({ page }) => {
+  await bootClean(page);
+  await page.locator('#settings-toggle').click();
+  await expect(page.locator('.settings-popover [data-setting="showThemeButton"] input')).toBeChecked();
+  await expect(page.locator('.settings-popover [data-setting="showLanguagePicker"] input')).toBeChecked();
 });

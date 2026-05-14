@@ -25,7 +25,7 @@ import {
   moveOverlay,
   updateOverlay,
 } from '../overlays.js';
-import { canvasToSource } from '../render/previewRenderer.js';
+import { canvasToSource, getDisplayZoom } from '../render/previewRenderer.js';
 import { withOverlaysHistory } from '../historyOps.js';
 import { recordOp } from '../history.js';
 import { t } from '../i18n.js';
@@ -215,7 +215,13 @@ function up(_e) {
   if (!moved && downSourcePoint) {
     const img = getActiveImage();
     if (img) {
-      const o = newTextOverlay(downSourcePoint.x, downSourcePoint.y);
+      // Pick a default font size so the text is roughly TARGET_CSS_PX tall
+      // on screen at the current zoom — invisibly tiny defaults on huge
+      // images and giant defaults on tiny ones both hurt usability. Falls
+      // back to 5% of the source image height when the display zoom isn't
+      // yet known (renderer hasn't produced a frame).
+      const size = computeDefaultTextSize(img);
+      const o = newTextOverlay(downSourcePoint.x, downSourcePoint.y, { size });
       withOverlaysHistory('Add text', img.id, state => {
         const target = state.images[img.id];
         if (!target) return;
@@ -568,6 +574,30 @@ function syncPanelFromState() {
   }
 
   lastRenderedSelectedId = selId;
+}
+
+// Pick a default font size for a new text overlay so the rendered glyphs
+// are visibly readable at the current zoom — about TARGET_CSS_PX tall on
+// screen. The source-pixel size is `target / displayZoom`; clamped to a
+// sane band so users can still tweak via the slider.
+const TARGET_CSS_PX = 24;
+const MIN_SOURCE_PX = 16;
+const MAX_SOURCE_PX = 512;
+
+function computeDefaultTextSize(img) {
+  const zoom = getDisplayZoom();
+  if (zoom && Number.isFinite(zoom) && zoom > 0) {
+    const px = Math.round(TARGET_CSS_PX / zoom);
+    return Math.max(MIN_SOURCE_PX, Math.min(MAX_SOURCE_PX, px));
+  }
+  // No display zoom available — fall back to ~5% of source image height,
+  // which renders at a reasonable size for the common 100–4000 px range.
+  const h = img && img.source ? img.source.height : 0;
+  if (h && Number.isFinite(h)) {
+    const fallback = Math.round(h * 0.05);
+    return Math.max(16, Math.min(256, fallback));
+  }
+  return 32; // last-resort default
 }
 
 // Test-only reset for browser specs.

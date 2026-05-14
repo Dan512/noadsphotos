@@ -6,18 +6,62 @@
   <title>NoAdsPhotos — Image editor that respects your data</title>
   <meta name="description" content="A privacy-first image editor and batch processor that runs entirely in your browser. No uploads, no tracking.">
   <meta name="theme-color" content="#0f1410">
+  <link rel="canonical" href="https://noadsphotos.com/">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/img/logo.svg" type="image/svg+xml">
   <link rel="stylesheet" href="css/style.css">
+
+  <!-- Open Graph (Facebook, LinkedIn, Discord, Slack previews) -->
+  <meta property="og:title" content="NoAdsPhotos — Batch image editing in your browser">
+  <meta property="og:description" content="Privacy-first browser image editor. Crop, resize, adjust, redact, remove backgrounds, and batch-export to ZIP. Image files never leave your device.">
+  <meta property="og:url" content="https://noadsphotos.com/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="NoAdsPhotos">
+  <meta property="og:locale" content="en_US">
+
+  <!-- Twitter card -->
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="NoAdsPhotos — Batch image editing in your browser">
+  <meta name="twitter:description" content="Privacy-first browser image editor. Crop, resize, adjust, redact, remove backgrounds, batch-export to ZIP. Image files never leave your device.">
+
+  <!-- Structured data: WebApplication -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebApplication",
+    "name": "NoAdsPhotos",
+    "url": "https://noadsphotos.com/",
+    "description": "Privacy-first browser image editor. Crop, resize, adjust, redact, remove backgrounds, and batch-export to ZIP. Image files never leave your device.",
+    "applicationCategory": "MultimediaApplication",
+    "operatingSystem": "Any (browser-based)",
+    "browserRequirements": "Requires a modern browser with WebAssembly support.",
+    "isAccessibleForFree": true,
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    },
+    "license": "https://www.gnu.org/licenses/agpl-3.0.html",
+    "sameAs": [
+      "https://github.com/Dan512/noadsphotos"
+    ]
+  }
+  </script>
 </head>
 <body>
   <header class="topbar">
-    <h1 data-i18n="brandName">NoAdsPhotos</h1>
+    <p class="wordmark" data-i18n="brandName">NoAdsPhotos</p>
     <div class="spacer"></div>
     <div class="controls">
-      <button id="lang-toggle" type="button" data-i18n="language" data-i18n-attr="aria-label" aria-label="Language">🌐</button>
-      <button id="settings-toggle" type="button" data-i18n="settings" data-i18n-attr="aria-label" aria-label="Settings">⚙</button>
-      <a class="btn-tip" href="https://ko-fi.com/noadsdude" target="_blank" rel="noopener" data-i18n="tip">Tip</a>
+      <button id="lang-toggle" type="button" data-i18n="language" data-i18n-attr="aria-label" aria-label="Language">
+        <img class="lang-flag" src="/img/flags/en.png" alt="" width="20" height="14">
+      </button>
+      <button id="theme-toggle" type="button" data-i18n="themeToggle" data-i18n-attr="aria-label" aria-label="Toggle theme">☀️</button>
+      <button id="settings-toggle" type="button" data-i18n="settings" data-i18n-attr="aria-label" aria-label="Settings">⚙️</button>
+      <a class="btn-tip" href="https://ko-fi.com/noadsdude" target="_blank" rel="noopener">
+        <span class="tip-full" data-i18n="tip">Support this site</span>
+        <span class="tip-short" data-i18n="tipShort">Support</span>
+      </a>
     </div>
   </header>
 
@@ -29,9 +73,10 @@
   <footer>
     <button id="privacy-toggle" type="button" data-i18n="privacy">Privacy</button>
     <span aria-hidden="true">·</span>
-    <a href="https://github.com/Dan512/noadsphotos" target="_blank" rel="noopener" data-i18n="source">Source</a>
+    <a href="https://github.com/Dan512/noadsphotos" target="_blank" rel="noopener"
+       data-i18n="source" title="Source code on GitHub">Source</a>
     <span aria-hidden="true">·</span>
-    <a href="https://ko-fi.com/noadsdude" target="_blank" rel="noopener" data-i18n="tipFooter">Tip</a>
+    <a href="https://ko-fi.com/noadsdude" target="_blank" rel="noopener" data-i18n="tipFooter">Support this site</a>
   </footer>
 
   <!-- Import map: resolves bare specifiers used by vendored libraries.

@@ -73,7 +73,9 @@ test('SETTINGS_SCHEMA lists every expected key', () => {
       'confirmBeforeRemove',
       'defaultExportFormat',
       'defaultQuality',
+      'showLanguagePicker',
       'showOverlayOutlines',
+      'showThemeButton',
       'smoothBrushStrokes',
       'theme',
     ],
@@ -87,6 +89,8 @@ test('getSetting returns schema defaults on fresh state', () => {
   assert.equal(getSetting('confirmBeforeRemove'), false);
   assert.equal(getSetting('showOverlayOutlines'), false);
   assert.equal(getSetting('smoothBrushStrokes'), true);
+  assert.equal(getSetting('showThemeButton'), true);
+  assert.equal(getSetting('showLanguagePicker'), true);
 });
 
 test('setSetting writes through to state and localStorage', () => {
@@ -150,6 +154,8 @@ test('restoreDefaults resets every key', () => {
   setSetting('confirmBeforeRemove', true);
   setSetting('showOverlayOutlines', true);
   setSetting('smoothBrushStrokes', false);
+  setSetting('showThemeButton', false);
+  setSetting('showLanguagePicker', false);
   restoreDefaults();
   for (const [key, schema] of Object.entries(SETTINGS_SCHEMA)) {
     assert.equal(getSetting(key), schema.default, `${key} should reset to default`);

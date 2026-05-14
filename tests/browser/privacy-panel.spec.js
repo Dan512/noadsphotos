@@ -44,7 +44,7 @@ test('dialog contains all expected privacy section headings', async ({ page }) =
     'Local storage',
     'AI translations',
     'Open source',
-    'Tip',
+    'Support this site',
   ]);
 });
 

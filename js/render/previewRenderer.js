@@ -207,6 +207,28 @@ export function applySourceTransform(ctx) {
   return true;
 }
 
+// Return the current SOURCE→canvas-CSS-pixel scale. One source pixel
+// renders as `getDisplayZoom()` CSS pixels on screen, at the current zoom
+// and image transform. Tools that need a CSS-pixel target (e.g. textTool's
+// default font size of ~24 CSS px regardless of image size) use this to
+// back-calculate the source-space value.
+//
+// Returns null if the renderer hasn't drawn a frame yet (no active image)
+// or the overlay canvas is missing.
+export function getDisplayZoom() {
+  const ds = lastDrawState;
+  if (!ds || !ds.drawScale) return null;
+  const overlay = typeof document !== 'undefined'
+    ? document.getElementById('overlay-canvas')
+    : null;
+  if (!overlay) return null;
+  const cssW = parseFloat(overlay.style.width) || overlay.width;
+  if (!cssW || !overlay.width) return null;
+  // `drawScale` is source→canvas-internal-pixel; multiply by
+  // (cssW / canvasInternalW) to land in CSS pixels.
+  return ds.drawScale * (cssW / overlay.width);
+}
+
 // Inverse: canvas-element CSS-pixel point → source-pixel point. Used by
 // tools (e.g. textTool) so a click on the overlay element lands in the
 // correct image-pixel position regardless of zoom/rotate/flip/crop.

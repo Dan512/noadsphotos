@@ -12,6 +12,10 @@ import { LANGS, LANG_NAMES, setLanguage, getLanguage, t } from './i18n.js';
 export function initLanguagePicker() {
   const btn = document.getElementById('lang-toggle');
   if (!btn) return;
+  // Update the flag image src to reflect the current language. We do this
+  // once at boot — language changes trigger a full reload so the src is
+  // re-derived on the next load.
+  applyFlagToButton(btn);
   let popover = null;
 
   btn.addEventListener('click', (e) => {
@@ -87,4 +91,27 @@ function positionPopover(el, anchor) {
   el.style.top = `${Math.max(8, top)}px`;
   el.style.right = `${Math.max(8, right)}px`;
   el.style.left = 'auto';
+}
+
+// Update the lang-toggle button's flag <img> to the current language. If the
+// language's flag PNG is missing (e.g. tr.png isn't shipped yet) we silently
+// fall back to en.png and log a console warning. The button itself carries
+// the accessible name via data-i18n="language" on aria-label.
+function applyFlagToButton(btn) {
+  const img = btn.querySelector('img.lang-flag');
+  if (!img) return;
+  const code = getLanguage();
+  const src = `/img/flags/${code}.png`;
+  // Pre-load and verify via an off-DOM Image. On error, swap to en.png and
+  // warn. We don't block the initial render — if the load fails we'll
+  // already have shown a broken image briefly, then swap.
+  img.src = src;
+  // Bind a one-shot error handler. If the path 404s, fall back to en.
+  img.onerror = () => {
+    img.onerror = null;
+    if (!src.endsWith('/en.png')) {
+      console.warn(`languagePicker: flag for "${code}" not found at ${src}; falling back to en.png`);
+      img.src = '/img/flags/en.png';
+    }
+  };
 }

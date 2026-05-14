@@ -39,6 +39,8 @@ export const SETTINGS_SCHEMA = Object.freeze({
   confirmBeforeRemove: { kind: 'bool',                                       default: false },
   showOverlayOutlines: { kind: 'bool',                                       default: false },
   smoothBrushStrokes:  { kind: 'bool',                                       default: true  },
+  showThemeButton:     { kind: 'bool',                                       default: true  },
+  showLanguagePicker:  { kind: 'bool',                                       default: true  },
 });
 
 // --- Public API -----------------------------------------------------------
@@ -54,9 +56,24 @@ export function initSettings() {
   // — so we apply once at boot and let further per-image choices override.
   seedExportDefaults();
   bindGear();
+  bindThemeToggle();
+  applyTopbarVisibility();
+  applyThemeButtonIcon();
   // Subscribe so a programmatic settings change (e.g. via the popover or
   // setSetting() from tests) reflects in the DOM without manual plumbing.
   subscribe(applyThemeFromState);
+  subscribe(applyTopbarVisibility);
+  subscribe(applyThemeButtonIcon);
+  // Watch for OS-level color scheme changes so the topbar toggle icon
+  // tracks the system preference when theme === 'auto'.
+  if (typeof window !== 'undefined' && window.matchMedia) {
+    try {
+      const mql = window.matchMedia('(prefers-color-scheme: dark)');
+      const handler = () => applyThemeButtonIcon();
+      if (mql.addEventListener) mql.addEventListener('change', handler);
+      else if (mql.addListener) mql.addListener(handler);
+    } catch { /* ignore — older browsers */ }
+  }
 }
 
 function seedExportDefaults() {
@@ -125,6 +142,56 @@ function applyThemeFromState() {
   } else {
     document.documentElement.setAttribute('data-theme', theme);
   }
+}
+
+// --- Topbar toggles -------------------------------------------------------
+
+// Determine the theme currently being DISPLAYED (light or dark), considering
+// the html[data-theme] attribute first and the OS preference second.
+function getDisplayedTheme() {
+  if (typeof document === 'undefined' || !document.documentElement) return 'light';
+  const attr = document.documentElement.getAttribute('data-theme');
+  if (attr === 'light' || attr === 'dark') return attr;
+  if (typeof window !== 'undefined' && window.matchMedia) {
+    try {
+      if (window.matchMedia('(prefers-color-scheme: dark)').matches) return 'dark';
+    } catch { /* ignore */ }
+  }
+  return 'light';
+}
+
+// Wire the topbar theme-toggle button. Clicking always sets an EXPLICIT
+// theme (light or dark) — never auto. The settings popover stays the only
+// path back to auto.
+function bindThemeToggle() {
+  if (typeof document === 'undefined') return;
+  const btn = document.getElementById('theme-toggle');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    const displayed = getDisplayedTheme();
+    const next = displayed === 'dark' ? 'light' : 'dark';
+    setSetting('theme', next);
+  });
+}
+
+// Hide/show #theme-toggle and #lang-toggle based on user preference.
+function applyTopbarVisibility() {
+  if (typeof document === 'undefined') return;
+  const themeBtn = document.getElementById('theme-toggle');
+  if (themeBtn) themeBtn.hidden = !getSetting('showThemeButton');
+  const langBtn = document.getElementById('lang-toggle');
+  if (langBtn) langBtn.hidden = !getSetting('showLanguagePicker');
+}
+
+// Sync the topbar theme-toggle button's emoji to the displayed theme.
+//   light → ☀️  (means "we're showing light right now")
+//   dark  → 🌙  (means "we're showing dark right now")
+function applyThemeButtonIcon() {
+  if (typeof document === 'undefined') return;
+  const btn = document.getElementById('theme-toggle');
+  if (!btn) return;
+  const displayed = getDisplayedTheme();
+  btn.textContent = displayed === 'dark' ? '🌙' : '☀️';
 }
 
 // --- Persistence ----------------------------------------------------------
@@ -224,6 +291,8 @@ function buildPopoverHtml() {
   const confirmRemove = getSetting('confirmBeforeRemove');
   const overlayOutlines = getSetting('showOverlayOutlines');
   const smoothBrush = getSetting('smoothBrushStrokes');
+  const showTheme = getSetting('showThemeButton');
+  const showLang = getSetting('showLanguagePicker');
 
   // Each row carries data-setting so bindRows() can iterate generically.
   // Selects/inputs inside a row are uniquely identified by their type +
@@ -269,6 +338,18 @@ function buildPopoverHtml() {
       <input type="checkbox" id="settings-smooth-brush"
              ${smoothBrush ? 'checked' : ''}
              aria-label="${escapeHtml(t('settingsSmoothBrushAria'))}">
+    </div>
+    <div class="settings-row" data-setting="showThemeButton">
+      <label for="settings-show-theme">${escapeHtml(t('settingsShowTheme'))}</label>
+      <input type="checkbox" id="settings-show-theme"
+             ${showTheme ? 'checked' : ''}
+             aria-label="${escapeHtml(t('settingsShowThemeAria'))}">
+    </div>
+    <div class="settings-row" data-setting="showLanguagePicker">
+      <label for="settings-show-language">${escapeHtml(t('settingsShowLanguage'))}</label>
+      <input type="checkbox" id="settings-show-language"
+             ${showLang ? 'checked' : ''}
+             aria-label="${escapeHtml(t('settingsShowLanguageAria'))}">
     </div>
     <div class="settings-divider" aria-hidden="true"></div>
     <button type="button" class="settings-revert-btn"

@@ -32,8 +32,11 @@ test('static markup translations apply on boot', async ({ page }) => {
   // The settings button has data-i18n="settings" + data-i18n-attr="aria-label".
   const settings = page.locator('#settings-toggle');
   await expect(settings).toHaveAttribute('aria-label', 'Settings');
-  // The Tip button shows the EN label.
-  await expect(page.locator('a.btn-tip')).toHaveText('Tip');
+  // The Tip button uses Change 6's full-on-desktop, short-on-mobile span
+  // pattern. We assert against the full span so the test works on desktop
+  // viewports (the default Playwright projects' viewport widths exceed
+  // the 480px mobile-tip breakpoint).
+  await expect(page.locator('a.btn-tip .tip-full')).toHaveText('Support this site');
   // Privacy link.
   await expect(page.locator('#privacy-toggle')).toHaveText('Privacy');
 });
@@ -44,7 +47,7 @@ test('setLanguage("en") leaves DOM untouched (strings stay English)', async ({ p
     const { setLanguage } = await import('/js/i18n.js');
     setLanguage('en');
   });
-  await expect(page.locator('a.btn-tip')).toHaveText('Tip');
+  await expect(page.locator('a.btn-tip .tip-full')).toHaveText('Support this site');
 });
 
 test('setLanguage to a stub language falls back to EN strings', async ({ page }) => {
@@ -54,7 +57,11 @@ test('setLanguage to a stub language falls back to EN strings', async ({ page })
     setLanguage('es');
   });
   // Spanish dict is empty in v1 — falls back to EN.
-  await expect(page.locator('a.btn-tip')).toHaveText('Tip');
+  // The Tip button now uses Change 6's full-on-desktop, short-on-mobile
+  // span pattern. We assert against the full span so the test works on
+  // desktop viewports (the default Playwright projects' viewport widths
+  // exceed the 480px mobile-tip breakpoint).
+  await expect(page.locator('a.btn-tip .tip-full')).toHaveText('Support this site');
   await expect(page.locator('#settings-toggle')).toHaveAttribute('aria-label', 'Settings');
 });
 
@@ -121,8 +128,11 @@ test('clicking outside the language popover closes it', async ({ page }) => {
   await bootClean(page);
   await page.locator('#lang-toggle').click();
   await expect(page.locator('.language-popover')).toBeVisible();
-  // Click on a neutral area (the body, far from the popover).
-  await page.locator('body').click({ position: { x: 10, y: 200 } });
+  // Click on the topbar wordmark — outside the popover, not an interactive
+  // element. Previously this test clicked on body at y=200, but the queue
+  // intro section now occupies that vertical range and would swallow the
+  // click on mobile Safari hit-testing.
+  await page.locator('.topbar .wordmark').click();
   await expect(page.locator('.language-popover')).toHaveCount(0);
 });
 
@@ -157,4 +167,47 @@ test('setting language to ar via picker flips html dir on next load', async ({ p
   ]);
   await expect(page.locator('html')).toHaveAttribute('dir', 'rtl', { timeout: 5000 });
   await expect(page.locator('html')).toHaveAttribute('lang', 'ar');
+});
+
+// --- Topbar flag (Change 2) ----------------------------------------------
+
+test('lang-toggle button shows the flag of the current language', async ({ page }) => {
+  await bootClean(page);
+  const src = await page.locator('#lang-toggle img.lang-flag').getAttribute('src');
+  // Default boot → en. The flag src should resolve to /img/flags/en.png.
+  expect(src).toBe('/img/flags/en.png');
+});
+
+test('lang-toggle flag updates after switching language', async ({ page }) => {
+  await bootClean(page);
+  await page.locator('#lang-toggle').click();
+  await Promise.all([
+    page.waitForLoadState('domcontentloaded'),
+    page.locator('.language-row[data-lang="de"]').click(),
+  ]);
+  await expect(page.locator('html')).toHaveAttribute('data-boot-ready', '1', { timeout: 5000 });
+  const src = await page.locator('#lang-toggle img.lang-flag').getAttribute('src');
+  expect(src).toBe('/img/flags/de.png');
+});
+
+test('lang-toggle flag falls back to en.png when language has no flag', async ({ page }) => {
+  // Pre-seed Turkish — which is intentionally without a flag PNG in v1.
+  await page.addInitScript(() => {
+    try {
+      localStorage.setItem('noadsimages_lang', 'tr');
+      sessionStorage.setItem('__i18nTestArmed__', '1');
+    } catch { /* ignore */ }
+  });
+  // Capture console warnings so we can assert the fallback warning fired.
+  const warnings = [];
+  page.on('console', (msg) => {
+    if (msg.type() === 'warning') warnings.push(msg.text());
+  });
+  await page.goto('/');
+  await expect(page.locator('html')).toHaveAttribute('data-boot-ready', '1', { timeout: 5000 });
+  // Wait for the onerror fallback to kick in.
+  await expect.poll(async () => {
+    return await page.locator('#lang-toggle img.lang-flag').getAttribute('src');
+  }, { timeout: 2000 }).toBe('/img/flags/en.png');
+  expect(warnings.some(w => /flag for "tr" not found/.test(w))).toBe(true);
 });

@@ -1,4 +1,4 @@
-// tests/browser/mobile.spec.js — Phase 13 responsive / mobile checks.
+// tests/browser/mobile.spec.js — Phase 13/14 responsive / mobile checks.
 //
 // Strategy: the test suite runs across desktop chromium/webkit/firefox AND
 // the explicit `mobile-chrome` / `mobile-safari` Playwright projects (Pixel 7
@@ -6,8 +6,8 @@
 // care about split into two buckets:
 //
 //   1. Things gated by the `@media (max-width: 768px)` viewport rule —
-//      bottom-sheet layout, single-column queue grid, horizontal toolbar
-//      scroll. We force these tests onto a small viewport via
+//      always-visible bottom panel, single-column queue grid, horizontal
+//      toolbar scroll. We force these tests onto a small viewport via
 //      `test.use({ viewport })` so they run consistently across every
 //      Playwright project. The mobile-* projects also exercise the same
 //      paths but with real device touch emulation.
@@ -17,9 +17,10 @@
 //      project itself runs a coarse-pointer device profile, so we
 //      restrict them with `test.skip(({}) => !isCoarse, ...)`.
 //
-// The DOM (trigger button, tab bar) is injected unconditionally — desktop
-// CSS just keeps it `display: none`. Our `expect(...).toBeVisible()` checks
-// account for that.
+// Phase 14: the bottom-sheet dialog is gone. The editor panel is now in
+// flow at the bottom of the mobile layout (40 vh tall) and always visible
+// — no trigger button, no open/close state. The tab strip is still injected
+// because it's useful at any viewport to switch between sections.
 import { test, expect } from '@playwright/test';
 
 // Phone-shaped viewport that fits the mobile media query (<=768 px wide).
@@ -89,17 +90,18 @@ async function openEditorWithImage(page) {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Bottom-sheet trigger button & tab bar exist after boot (DOM-only check).
-//    These run on every project — the DOM injection is unconditional, only
-//    visibility is media-gated.
+// 1. Tab bar exists after boot (DOM-only check). The trigger button is
+//    no longer injected — the panel is always visible on mobile.
 // ---------------------------------------------------------------------------
 
-test('bottom sheet: trigger button is injected into the DOM', async ({ page }) => {
+test('mobile panel: no trigger button is injected', async ({ page }) => {
   await resetApp(page);
-  await expect(page.locator('.editor-panel-trigger')).toHaveCount(1);
+  // Phase 14: the bottom-sheet trigger is gone entirely. The panel is in
+  // flow at the bottom of the mobile editor layout.
+  await expect(page.locator('.editor-panel-trigger')).toHaveCount(0);
 });
 
-test('bottom sheet: tab bar with 5 tabs is injected into the editor panel', async ({ page }) => {
+test('mobile panel: tab bar with 5 tabs is injected into the editor panel', async ({ page }) => {
   await resetApp(page);
   const tabs = page.locator('.editor-panel .editor-panel-tabs .editor-panel-tab');
   await expect(tabs).toHaveCount(5);
@@ -107,7 +109,7 @@ test('bottom sheet: tab bar with 5 tabs is injected into the editor panel', asyn
   expect(labels).toEqual(['Tool', 'Resize', 'Adjust', 'Overlays', 'Export']);
 });
 
-test('bottom sheet: first tab is marked active by default', async ({ page }) => {
+test('mobile panel: first tab is marked active by default', async ({ page }) => {
   await resetApp(page);
   await expect(page.locator('.editor-panel-tab[data-tab="tool"]')).toHaveClass(/is-active/);
 });
@@ -134,40 +136,37 @@ test.describe('mobile viewport (forced 390x844)', () => {
     expect(batchPos).toBe('static');
   });
 
-  test('editor view has no visible right side panel by default', async ({ page }) => {
+  test('editor view: side panel is visible at the bottom (no dismiss state)', async ({ page }) => {
     await resetApp(page);
     await openEditorWithImage(page);
-    // The element exists but is translated 100% off the bottom — its
-    // computed visibility is false because it's outside the viewport rect.
-    // We can't rely on Playwright's toBeVisible() because the element still
-    // has non-zero size; instead, check the transform.
+    // Phase 14: the panel is anchored in flow at the bottom of the layout.
+    // No transform, no fixed positioning, no is-open class needed.
+    await expect(page.locator('.editor-panel')).toBeVisible();
     const transform = await page.locator('.editor-panel').evaluate(el => getComputedStyle(el).transform);
-    // CSS `translateY(100%)` resolves to a matrix with a translation
-    // approximately equal to the element's height. Anything starting with
-    // "matrix(" and a non-zero ty offset works.
-    expect(transform).toMatch(/^matrix(?:\(|3d)/);
-    expect(transform).not.toBe('none');
+    // `static`/`grid-area` placement leaves transform as 'none'.
+    expect(transform).toBe('none');
   });
 
-  test('editor view: trigger is visible and tab bar exists in panel', async ({ page }) => {
+  test('editor view: side panel takes ~40vh of viewport height', async ({ page }) => {
     await resetApp(page);
     await openEditorWithImage(page);
-    await expect(page.locator('.editor-panel-trigger')).toBeVisible();
+    const viewport = page.viewportSize();
+    const panelHeight = await page.locator('.editor-panel').evaluate(el => el.getBoundingClientRect().height);
+    // ~40 vh, with a little slack for sub-pixel rounding + the tab bar.
+    expect(panelHeight).toBeGreaterThan(viewport.height * 0.30);
+    expect(panelHeight).toBeLessThan(viewport.height * 0.55);
+  });
+
+  test('editor view: trigger is NOT injected (panel is always visible)', async ({ page }) => {
+    await resetApp(page);
+    await openEditorWithImage(page);
+    await expect(page.locator('.editor-panel-trigger')).toHaveCount(0);
     await expect(page.locator('.editor-panel .editor-panel-tabs')).toBeAttached();
   });
 
-  test('tapping the trigger button opens the bottom sheet (slides up)', async ({ page }) => {
+  test('mobile panel: tapping a tab activates the corresponding section', async ({ page }) => {
     await resetApp(page);
     await openEditorWithImage(page);
-    await expect(page.locator('.editor-panel')).not.toHaveClass(/is-open/);
-    await page.locator('.editor-panel-trigger').click();
-    await expect(page.locator('.editor-panel')).toHaveClass(/is-open/);
-  });
-
-  test('bottom sheet: tapping a tab activates the corresponding section', async ({ page }) => {
-    await resetApp(page);
-    await openEditorWithImage(page);
-    await page.locator('.editor-panel-trigger').click();
 
     await page.locator('.editor-panel-tab[data-tab="resize"]').click();
     await expect(page.locator('.editor-panel-tab[data-tab="resize"]')).toHaveClass(/is-active/);
@@ -177,78 +176,6 @@ test.describe('mobile viewport (forced 390x844)', () => {
     await page.locator('.editor-panel-tab[data-tab="export"]').click();
     await expect(page.locator('.editor-panel-tab[data-tab="export"]')).toHaveClass(/is-active/);
     await expect(page.locator('#panel-export')).toHaveClass(/is-active-tab/);
-  });
-
-  test('bottom sheet: outside click on the canvas frame closes the sheet', async ({ page }) => {
-    await resetApp(page);
-    await openEditorWithImage(page);
-    await page.locator('.editor-panel-trigger').click();
-    await expect(page.locator('.editor-panel')).toHaveClass(/is-open/);
-
-    // Click on the top toolbar area, well outside the panel.
-    await page.locator('.editor-toolbar').click({ position: { x: 5, y: 5 } });
-    await expect(page.locator('.editor-panel')).not.toHaveClass(/is-open/);
-  });
-
-  test('bottom sheet: Escape key closes the sheet', async ({ page }) => {
-    await resetApp(page);
-    await openEditorWithImage(page);
-    await page.locator('.editor-panel-trigger').click();
-    await expect(page.locator('.editor-panel')).toHaveClass(/is-open/);
-
-    await page.keyboard.press('Escape');
-    await expect(page.locator('.editor-panel')).not.toHaveClass(/is-open/);
-  });
-
-  test('bottom sheet: pointer-drag the handle past 80px dismisses', async ({ page }) => {
-    await resetApp(page);
-    await openEditorWithImage(page);
-    await page.locator('.editor-panel-trigger').click();
-    await expect(page.locator('.editor-panel')).toHaveClass(/is-open/);
-
-    // Simulate a pointerdown on the handle area (top 30 px of the panel),
-    // then a series of pointermoves dragging downward 120 px, then a release.
-    await page.evaluate(() => {
-      const panel = document.querySelector('.editor-panel');
-      const rect = panel.getBoundingClientRect();
-      const x = rect.left + rect.width / 2;
-      const yStart = rect.top + 10;
-      const ev = (type, y) => new PointerEvent(type, {
-        pointerId: 7, pointerType: 'touch', isPrimary: true, bubbles: true,
-        cancelable: true, clientX: x, clientY: y,
-        buttons: type === 'pointerup' ? 0 : 1,
-      });
-      panel.dispatchEvent(ev('pointerdown', yStart));
-      for (let i = 1; i <= 6; i++) {
-        panel.dispatchEvent(ev('pointermove', yStart + i * 20));
-      }
-      panel.dispatchEvent(ev('pointerup', yStart + 120));
-    });
-    await expect(page.locator('.editor-panel')).not.toHaveClass(/is-open/);
-  });
-
-  test('bottom sheet: short drag (under 80px) does NOT dismiss', async ({ page }) => {
-    await resetApp(page);
-    await openEditorWithImage(page);
-    await page.locator('.editor-panel-trigger').click();
-    await expect(page.locator('.editor-panel')).toHaveClass(/is-open/);
-
-    await page.evaluate(() => {
-      const panel = document.querySelector('.editor-panel');
-      const rect = panel.getBoundingClientRect();
-      const x = rect.left + rect.width / 2;
-      const yStart = rect.top + 10;
-      const ev = (type, y) => new PointerEvent(type, {
-        pointerId: 8, pointerType: 'touch', isPrimary: true, bubbles: true,
-        cancelable: true, clientX: x, clientY: y,
-        buttons: type === 'pointerup' ? 0 : 1,
-      });
-      panel.dispatchEvent(ev('pointerdown', yStart));
-      panel.dispatchEvent(ev('pointermove', yStart + 20));
-      panel.dispatchEvent(ev('pointermove', yStart + 40));
-      panel.dispatchEvent(ev('pointerup', yStart + 40));
-    });
-    await expect(page.locator('.editor-panel')).toHaveClass(/is-open/);
   });
 
   test('editor toolbar overflows horizontally with overflow-x: auto', async ({ page }) => {
@@ -351,11 +278,11 @@ test.describe('touch device (pointer: coarse)', () => {
 test.describe('desktop viewport (forced 1280x800)', () => {
   test.use({ viewport: { width: 1280, height: 800 } });
 
-  test('trigger button is hidden on wide viewports', async ({ page }) => {
+  test('trigger button is not injected on wide viewports', async ({ page }) => {
     await resetApp(page);
     await openEditorWithImage(page);
-    const display = await page.locator('.editor-panel-trigger').evaluate(el => getComputedStyle(el).display);
-    expect(display).toBe('none');
+    // Phase 14: trigger element is no longer injected on any viewport.
+    await expect(page.locator('.editor-panel-trigger')).toHaveCount(0);
   });
 
   test('editor panel is in flow (position: static or auto)', async ({ page }) => {

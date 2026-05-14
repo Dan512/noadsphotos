@@ -32,6 +32,7 @@ import { getSetting } from './settings.js';
 const rendered = new Map(); // id -> { node: HTMLElement, url: string, thumbnailBlob: Blob, badgeEl: HTMLElement|null }
 let gridEl = null;
 let emptyEl = null;
+let introEl = null;
 let panelEl = null;
 let panelRefs = null;   // refs to inputs inside the batch panel
 let panelSubscribed = false;
@@ -52,6 +53,7 @@ function render(state) {
   const queue = state.queue;
 
   if (queue.length === 0) {
+    ensureIntro(root);
     ensureEmptyState(root);
     if (gridEl && gridEl.parentNode) gridEl.parentNode.removeChild(gridEl);
     gridEl = null;
@@ -61,8 +63,10 @@ function render(state) {
     return;
   }
 
-  // Populated state: ensure the empty pane is gone and the grid + batch panel
-  // exist.
+  // Populated state: ensure the intro + empty pane are gone and the grid +
+  // batch panel exist.
+  if (introEl && introEl.parentNode) introEl.parentNode.removeChild(introEl);
+  introEl = null;
   if (emptyEl && emptyEl.parentNode) emptyEl.parentNode.removeChild(emptyEl);
   emptyEl = null;
   if (!gridEl) {
@@ -93,6 +97,32 @@ function ensureEmptyState(root) {
     document.dispatchEvent(new CustomEvent('noadsimages:openFileBrowser'));
   });
   root.appendChild(emptyEl);
+}
+
+// Intro landing copy, rendered ABOVE the drop zone when the queue is empty.
+// The <h1> here is the canonical content heading on the page — the topbar
+// wordmark is a <p> so the document has exactly one h1.
+function ensureIntro(root) {
+  if (introEl && introEl.isConnected) return;
+  introEl = document.createElement('section');
+  introEl.className = 'queue-intro';
+  // No user-derived content here; t() output is HTML-escaped for variable
+  // interpolation, and our keys contain only static literals + safe glyphs.
+  introEl.innerHTML = `
+    <h1 class="intro-title" data-i18n="introTitle">${escapeHtml(t('introTitle'))}</h1>
+    <p class="intro-lead" data-i18n="introLead">${escapeHtml(t('introLead'))}</p>
+    <p class="intro-tags" data-i18n="introTags">${escapeHtml(t('introTags'))}</p>
+    <ul class="intro-features">
+      <li data-i18n="introFeatureBatch">${escapeHtml(t('introFeatureBatch'))}</li>
+      <li data-i18n="introFeatureBgRemove">${escapeHtml(t('introFeatureBgRemove'))}</li>
+      <li data-i18n="introFeatureRedact">${escapeHtml(t('introFeatureRedact'))}</li>
+      <li data-i18n="introFeatureChromakey">${escapeHtml(t('introFeatureChromakey'))}</li>
+      <li data-i18n="introFeatureExport">${escapeHtml(t('introFeatureExport'))}</li>
+    </ul>
+  `;
+  // Prepend so the intro sits ABOVE the drop zone, regardless of order of
+  // calls in render().
+  root.insertBefore(introEl, root.firstChild);
 }
 
 function diffRender(state) {

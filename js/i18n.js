@@ -39,8 +39,10 @@ export const TRANSLATIONS = {
     brandName:                'NoAdsPhotos',
     language:                 'Language',
     settings:                 'Settings',
-    tip:                      'Tip',
-    tipFooter:                'Tip',
+    themeToggle:              'Toggle theme',
+    tip:                      'Support this site',
+    tipShort:                 'Support',
+    tipFooter:                'Support this site',
     privacy:                  'Privacy',
     source:                   'Source',
     home:                     'Home',
@@ -54,6 +56,18 @@ export const TRANSLATIONS = {
     queueOpenImage:           'Open {name}',
     queueRemoveImage:         'Remove {name}',
     queueBatchBadge:          'batch',
+
+    // --- Queue intro (empty-state landing copy) ---------------------------
+    // Rendered above the drop zone when the queue is empty. The introTitle
+    // becomes the single content <h1> on the page.
+    introTitle:               'Batch image editing in your browser.',
+    introLead:                'Resize, crop, adjust, redact, remove backgrounds, and export PNG, JPG, or WebP. Image files never leave your device.',
+    introTags:                'Free · No signup · Open source',
+    introFeatureBatch:        'Batch resize and export — save images as a ZIP',
+    introFeatureBgRemove:     'Remove backgrounds — no upload required',
+    introFeatureRedact:       'Redact details — blur or pixelate selected areas',
+    introFeatureChromakey:    'Make colors transparent — eyedropper with tolerance',
+    introFeatureExport:       'Export PNG, JPG, or WebP — control quality per image',
 
     // --- Batch panel -------------------------------------------------------
     batchPanelLabel:          'Batch operations',
@@ -144,12 +158,12 @@ export const TRANSLATIONS = {
     panelOverlays:            'Overlays',
     panelExport:              'Export',
 
-    // --- Bottom sheet (mobile) section tabs (Phase 13) --------------------
-    // Short labels used by the editor's bottom-sheet tabs on mobile. They
-    // mirror the desktop panel headings above but trim the verbose "Tool
-    // options" down to "Tool" so the row fits comfortably on a narrow phone
-    // viewport. The trigger button label is also kept terse.
-    bottomSheetTrigger:       'Panel',
+    // --- Mobile panel section tabs (Phase 13/14) --------------------------
+    // Short labels used by the editor's panel tabs on mobile. They mirror
+    // the desktop panel headings above but trim the verbose "Tool options"
+    // down to "Tool" so the row fits comfortably on a narrow phone
+    // viewport. Phase 14 dropped the bottom-sheet trigger button, so its
+    // label was removed.
     tab_tool:                 'Tool',
     tab_resize:               'Resize',
     tab_adjust:               'Adjust',
@@ -383,6 +397,10 @@ export const TRANSLATIONS = {
     settingsOverlayOutlinesAria: 'Show outlines around every overlay',
     settingsSmoothBrush:      'Smooth brush strokes',
     settingsSmoothBrushAria:  'Smooth brush strokes with Catmull-Rom resampling',
+    settingsShowTheme:        'Show light/dark toggle button',
+    settingsShowThemeAria:    'Show the topbar light/dark toggle button',
+    settingsShowLanguage:     'Show language selector',
+    settingsShowLanguageAria: 'Show the topbar language selector button',
     settingsRestoreDefaults:  'Restore default settings',
     settingsRestoreDefaultsAria: 'Restore default settings',
 
@@ -408,7 +426,7 @@ export const TRANSLATIONS = {
     privacyAIBody:            'The UI is translated into 15 languages with the help of AI tools. Errors may exist; report them in the GitHub issue tracker.',
     privacyOpenSourceHeading: 'Open source',
     privacyOpenSourceBody:    'Licensed under GNU AGPL v3.0. Source repository: <a href="https://github.com/Dan512/noadsphotos" target="_blank" rel="noopener">https://github.com/Dan512/noadsphotos</a>.',
-    privacyTipHeading:        'Tip',
+    privacyTipHeading:        'Support this site',
     privacyTipBody:           'If this is useful, <a href="https://ko-fi.com/noadsdude" target="_blank" rel="noopener">tip via Ko-fi</a>.',
     privacyStaticLink:        'Open this notice as a standalone page',
 
