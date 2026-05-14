@@ -3,7 +3,7 @@ import { probeCapabilities } from './capabilities.js';
 import { showToast } from './errors.js';
 import { createLifecycle } from './lifecycle.js';
 import { initImporter } from './importer.js';
-import { initQueueView } from './queueView.js';
+import { initQueueView, setQueueViewContext } from './queueView.js';
 import { initViews } from './views.js';
 import { initEditor } from './editor.js';
 import { initBottomSheet } from './bottomSheet.js';
@@ -59,6 +59,10 @@ async function boot() {
   initPreviewRenderer(lifecycle, caps);
   // Exporter needs lifecycle + caps refs so the Download button can act.
   setExportContext({ lifecycle, caps });
+  // QueueView needs the same refs so it can re-render thumbnails after
+  // batch operations (auto-refresh feature). Loose coupling — we don't
+  // pull the exporter's context through, in case the two diverge later.
+  setQueueViewContext({ lifecycle, caps });
   // Tools must initialise AFTER the editor mounts the side panel.
   initSelectTool();
   initCropTool();

@@ -35,13 +35,14 @@ test('clicking the gear opens a settings popover', async ({ page }) => {
   await expect(page.locator('.settings-popover')).toBeVisible();
 });
 
-test('settings popover contains all 8 rows + restore button', async ({ page }) => {
+test('settings popover contains all 9 rows + restore button', async ({ page }) => {
   await bootClean(page);
   await page.locator('#settings-toggle').click();
   const rows = page.locator('.settings-popover .settings-row');
-  await expect(rows).toHaveCount(8);
+  await expect(rows).toHaveCount(9);
   const keys = await rows.evaluateAll(els => els.map(el => el.dataset.setting));
   expect(keys.sort()).toEqual([
+    'autoRefreshThumbnails',
     'confirmBeforeRemove',
     'defaultExportFormat',
     'defaultQuality',
@@ -122,6 +123,7 @@ test('Restore defaults resets every control', async ({ page }) => {
     confirmBeforeRemove: true,
     showOverlayOutlines: true,
     smoothBrushStrokes: false,
+    autoRefreshThumbnails: false,
     showThemeButton: false,
     showLanguagePicker: false,
   });
@@ -139,6 +141,7 @@ test('Restore defaults resets every control', async ({ page }) => {
   await expect(page.locator('.settings-popover [data-setting="confirmBeforeRemove"] input')).not.toBeChecked();
   await expect(page.locator('.settings-popover [data-setting="showOverlayOutlines"] input')).not.toBeChecked();
   await expect(page.locator('.settings-popover [data-setting="smoothBrushStrokes"] input')).toBeChecked();
+  await expect(page.locator('.settings-popover [data-setting="autoRefreshThumbnails"] input')).toBeChecked();
   await expect(page.locator('.settings-popover [data-setting="showThemeButton"] input')).toBeChecked();
   await expect(page.locator('.settings-popover [data-setting="showLanguagePicker"] input')).toBeChecked();
 });

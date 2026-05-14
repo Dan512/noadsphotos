@@ -21,11 +21,12 @@ import {
   withBatchAdjust,
   withBatchChromakey,
 } from './historyOps.js';
-import { exportBatch } from './exporter.js';
+import { exportBatch, exportEachIndividually } from './exporter.js';
 import { showToast } from './errors.js';
 import { applyBgRemoveBatch } from './ops/bgremove.js';
 import { t } from './i18n.js';
 import { getSetting } from './settings.js';
+import { renderThumbnail } from './render/exportRenderer.js';
 
 // Track per-thumb DOM nodes and their object URLs so we can diff-render
 // without rebuilding the grid on every state change.
@@ -41,6 +42,103 @@ let exportPanelSubsBound = false;
 export function initQueueView() {
   render(getState());
   subscribe(render);
+}
+
+// --------------------------------------------------------------------------
+// Thumbnail auto-refresh — context + sequential per-image regeneration.
+//
+// Wired from main.js after lifecycle + caps are ready. We deliberately use a
+// dedicated setter rather than reach into exporter.js's context so the two
+// modules stay loosely coupled.
+// --------------------------------------------------------------------------
+let ctxLifecycle = null;
+let ctxCaps = null;
+let refreshInFlight = false;
+let pendingRefresh = null;
+
+export function setQueueViewContext({ lifecycle, caps } = {}) {
+  ctxLifecycle = lifecycle || null;
+  ctxCaps = caps || null;
+}
+
+// Test escape hatch: reset internal state so a spec re-arms cleanly.
+export function _resetThumbRefreshForTest() {
+  ctxLifecycle = null;
+  ctxCaps = null;
+  refreshInFlight = false;
+  pendingRefresh = null;
+}
+
+/**
+ * Fire-and-forget thumbnail refresh for the supplied ids. Honors the
+ * `autoRefreshThumbnails` setting (default true). Coalesces overlapping
+ * batch calls into a single follow-up pass.
+ *
+ * The function returns synchronously; callers in batch handlers don't await.
+ * Tests can `await` the returned promise to wait for completion.
+ *
+ * @param {string[]} ids
+ * @returns {Promise<void>}
+ */
+export async function maybeRefreshThumbs(ids) {
+  if (!getSetting('autoRefreshThumbnails')) return;
+  if (!ids || ids.length === 0) return;
+  if (!ctxLifecycle || !ctxCaps) return; // not yet wired — no-op
+
+  if (refreshInFlight) {
+    // Collapse: just remember the latest ids so we run them once after the
+    // current pass finishes.
+    pendingRefresh = [...ids];
+    return;
+  }
+  refreshInFlight = true;
+  try {
+    await refreshThumbsSequential([...ids]);
+    while (pendingRefresh) {
+      const next = pendingRefresh;
+      pendingRefresh = null;
+      await refreshThumbsSequential(next);
+    }
+  } finally {
+    refreshInFlight = false;
+  }
+}
+
+async function refreshThumbsSequential(ids) {
+  const lifecycle = ctxLifecycle;
+  const caps = ctxCaps;
+  if (!lifecycle || !caps) return;
+
+  for (const id of ids) {
+    const s = getState();
+    const img = s.images[id];
+    if (!img) continue;
+    try {
+      const newThumb = await renderThumbnail(img, caps, lifecycle);
+      update(state => {
+        const i = state.images[id];
+        if (i && i.source) i.source.thumbnail = newThumb;
+      });
+      // Yield to let the browser paint the new thumbnail before moving on,
+      // so the user sees the batch advance one image at a time.
+      await new Promise(r => {
+        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => r());
+        else setTimeout(r, 0);
+      });
+    } catch (err) {
+      // Don't break the batch on a single image. Common failures:
+      // output_exceeds_canvas_limit, source_bitmap_unavailable.
+      // eslint-disable-next-line no-console
+      console.warn('queueView: thumbnail refresh failed for', id, err);
+    } finally {
+      // Free the source bitmap if we decoded it just for the thumbnail and
+      // it isn't the editor's active image. Skips no-ops.
+      if (id !== getState().ui.activeImageId
+          && lifecycle && typeof lifecycle.evictAfterUse === 'function') {
+        try { lifecycle.evictAfterUse(id); } catch { /* ignore */ }
+      }
+    }
+  }
 }
 
 function render(state) {
@@ -72,7 +170,14 @@ function render(state) {
   if (!gridEl) {
     gridEl = document.createElement('div');
     gridEl.className = 'queue-grid';
-    root.appendChild(gridEl);
+    // Insert BEFORE panelEl if the panel already exists (left over from a
+    // previous populated state). Otherwise append. This keeps the grid in
+    // column 1 (1fr) and the panel in column 2 (360px) of the CSS grid.
+    if (panelEl && panelEl.parentNode === root) {
+      root.insertBefore(gridEl, panelEl);
+    } else {
+      root.appendChild(gridEl);
+    }
   }
   if (!panelEl) {
     panelEl = buildBatchPanel();
@@ -504,6 +609,16 @@ function buildBatchPanel() {
   exportBtn.textContent = t('batchExportZip');
   exportBtn.setAttribute('aria-label', t('batchExportZipAria'));
   exportSection.body.appendChild(exportBtn);
+
+  // Secondary export: trigger an individual file download per image. Useful
+  // on mobile where a ZIP requires a separate unzip step.
+  const exportEachBtn = document.createElement('button');
+  exportEachBtn.type = 'button';
+  exportEachBtn.className = 'batch-apply-secondary export-each-btn';
+  exportEachBtn.textContent = t('batchExportEach');
+  exportEachBtn.setAttribute('aria-label', t('batchExportEachAria'));
+  exportSection.body.appendChild(exportEachBtn);
+
   panel.appendChild(exportSection.section);
 
   // --- Wire actions ------------------------------------------------------
@@ -535,7 +650,19 @@ function buildBatchPanel() {
     // Disable button during export to prevent double-click; re-enabled in
     // finally.
     exportBtn.disabled = true;
-    exportBatch().finally(() => { exportBtn.disabled = false; });
+    exportEachBtn.disabled = true;
+    exportBatch().finally(() => {
+      exportBtn.disabled = false;
+      exportEachBtn.disabled = false;
+    });
+  });
+  exportEachBtn.addEventListener('click', () => {
+    exportBtn.disabled = true;
+    exportEachBtn.disabled = true;
+    exportEachIndividually().finally(() => {
+      exportBtn.disabled = false;
+      exportEachBtn.disabled = false;
+    });
   });
 
   panelRefs = {
@@ -661,6 +788,7 @@ function onApplyResize(mode, valueStr, heightStr) {
       }
     });
     toast(t('batchToastResizeCleared', { count: ids.length }));
+    maybeRefreshThumbs(ids);
     return;
   }
 
@@ -684,6 +812,7 @@ function onApplyResize(mode, valueStr, heightStr) {
     }
   });
   toast(t('batchToastResizeApplied', { count: ids.length }));
+  maybeRefreshThumbs(ids);
 }
 
 function onApplyRotate(delta) {
@@ -699,6 +828,7 @@ function onApplyRotate(delta) {
     }
   });
   toast(t('batchToastRotated', { count: ids.length }));
+  maybeRefreshThumbs(ids);
 }
 
 function onApplyFlip(axis) {
@@ -713,6 +843,7 @@ function onApplyFlip(axis) {
     }
   });
   toast(t('batchToastFlipped', { count: ids.length }));
+  maybeRefreshThumbs(ids);
 }
 
 function onApplyAdjust(values, preset) {
@@ -730,6 +861,7 @@ function onApplyAdjust(values, preset) {
     }
   });
   toast(t('batchToastAdjusted', { count: ids.length }));
+  maybeRefreshThumbs(ids);
 }
 
 async function onApplyChromakey(hexInput, tolerance) {
@@ -769,6 +901,7 @@ async function onApplyChromakey(hexInput, tolerance) {
     }
   });
   toast(t('batchToastChromakey', { count: ids.length }));
+  maybeRefreshThumbs(ids);
 }
 
 async function onApplyBgRemove() {
@@ -800,6 +933,10 @@ async function onApplyBgRemove() {
   } else {
     showToast(t('batchBgDone', { count: result.count }), { variant: 'info' });
   }
+  // Refresh queue thumbnails so the (now alpha-cut) results show on each
+  // tile. The bg-remove loop already had its own progress modal so we
+  // intentionally do this AFTER, not during, the per-image runs.
+  maybeRefreshThumbs(ids);
 }
 
 function openBgRemoveProgressModal(ids) {

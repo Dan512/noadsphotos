@@ -33,14 +33,15 @@ const STORAGE_KEY = 'noadsimages_settings';
 //   - showOverlayOutlines: false — clutters the canvas by default.
 //   - smoothBrushStrokes:  true — current behavior; opt-out for raw lines.
 export const SETTINGS_SCHEMA = Object.freeze({
-  theme:               { kind: 'enum',   options: ['auto', 'light', 'dark'], default: 'auto' },
-  defaultExportFormat: { kind: 'enum',   options: ['png', 'jpeg', 'webp'],   default: 'png' },
-  defaultQuality:      { kind: 'number', min: 0.5, max: 1.0,                 default: 0.92 },
-  confirmBeforeRemove: { kind: 'bool',                                       default: false },
-  showOverlayOutlines: { kind: 'bool',                                       default: false },
-  smoothBrushStrokes:  { kind: 'bool',                                       default: true  },
-  showThemeButton:     { kind: 'bool',                                       default: true  },
-  showLanguagePicker:  { kind: 'bool',                                       default: true  },
+  theme:                  { kind: 'enum',   options: ['auto', 'light', 'dark'], default: 'auto' },
+  defaultExportFormat:    { kind: 'enum',   options: ['png', 'jpeg', 'webp'],   default: 'png' },
+  defaultQuality:         { kind: 'number', min: 0.5, max: 1.0,                 default: 0.92 },
+  confirmBeforeRemove:    { kind: 'bool',                                       default: false },
+  showOverlayOutlines:    { kind: 'bool',                                       default: false },
+  smoothBrushStrokes:     { kind: 'bool',                                       default: true  },
+  autoRefreshThumbnails:  { kind: 'bool',                                       default: true  },
+  showThemeButton:        { kind: 'bool',                                       default: true  },
+  showLanguagePicker:     { kind: 'bool',                                       default: true  },
 });
 
 // --- Public API -----------------------------------------------------------
@@ -291,6 +292,7 @@ function buildPopoverHtml() {
   const confirmRemove = getSetting('confirmBeforeRemove');
   const overlayOutlines = getSetting('showOverlayOutlines');
   const smoothBrush = getSetting('smoothBrushStrokes');
+  const autoRefreshThumbs = getSetting('autoRefreshThumbnails');
   const showTheme = getSetting('showThemeButton');
   const showLang = getSetting('showLanguagePicker');
 
@@ -338,6 +340,12 @@ function buildPopoverHtml() {
       <input type="checkbox" id="settings-smooth-brush"
              ${smoothBrush ? 'checked' : ''}
              aria-label="${escapeHtml(t('settingsSmoothBrushAria'))}">
+    </div>
+    <div class="settings-row" data-setting="autoRefreshThumbnails">
+      <label for="settings-auto-refresh-thumbs">${escapeHtml(t('settingsAutoRefreshThumbs'))}</label>
+      <input type="checkbox" id="settings-auto-refresh-thumbs"
+             ${autoRefreshThumbs ? 'checked' : ''}
+             aria-label="${escapeHtml(t('settingsAutoRefreshThumbsAria'))}">
     </div>
     <div class="settings-row" data-setting="showThemeButton">
       <label for="settings-show-theme">${escapeHtml(t('settingsShowTheme'))}</label>

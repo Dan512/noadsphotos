@@ -70,6 +70,7 @@ test('SETTINGS_SCHEMA lists every expected key', () => {
   assert.deepEqual(
     keys.sort(),
     [
+      'autoRefreshThumbnails',
       'confirmBeforeRemove',
       'defaultExportFormat',
       'defaultQuality',
@@ -89,6 +90,7 @@ test('getSetting returns schema defaults on fresh state', () => {
   assert.equal(getSetting('confirmBeforeRemove'), false);
   assert.equal(getSetting('showOverlayOutlines'), false);
   assert.equal(getSetting('smoothBrushStrokes'), true);
+  assert.equal(getSetting('autoRefreshThumbnails'), true);
   assert.equal(getSetting('showThemeButton'), true);
   assert.equal(getSetting('showLanguagePicker'), true);
 });
@@ -154,6 +156,7 @@ test('restoreDefaults resets every key', () => {
   setSetting('confirmBeforeRemove', true);
   setSetting('showOverlayOutlines', true);
   setSetting('smoothBrushStrokes', false);
+  setSetting('autoRefreshThumbnails', false);
   setSetting('showThemeButton', false);
   setSetting('showLanguagePicker', false);
   restoreDefaults();

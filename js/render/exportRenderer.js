@@ -124,6 +124,43 @@ export async function renderForExport(imageState, opts, caps, lifecycle) {
   return encodeCanvas(outputCanvas, normalizeMime(opts.format), opts.quality);
 }
 
+/**
+ * Render a thumbnail-sized preview reflecting all per-image state (transforms,
+ * chromakey, bgMask, adjustments, filter preset, overlays). Used for refreshing
+ * queue thumbnails after batch operations.
+ *
+ * The user's actual `transforms.resize` is overridden to fit the long side at
+ * roughly `targetSize` px — but we cap at the image's natural effective size
+ * so a 10%-resized 1024px source renders at its true ~102px output (no
+ * upscale) rather than being stretched to 200px.
+ *
+ * Returns a JPEG Blob at quality 0.7 (matches importer's thumbnail format).
+ *
+ * @param {object} imageState
+ * @param {object} caps
+ * @param {object} lifecycle
+ * @param {{targetSize?: number}} [opts]
+ * @returns {Promise<Blob>}
+ */
+export async function renderThumbnail(imageState, caps, lifecycle, { targetSize = 200 } = {}) {
+  if (!imageState) throw new Error('source_bitmap_unavailable');
+  // Determine the effective output size given the user's transforms + resize,
+  // then clamp the thumbnail's long side at min(effectiveLongest, targetSize)
+  // so we don't upscale small outputs.
+  const finalDims = effectiveImageSize(imageState);
+  const longest = Math.max(finalDims.w || 0, finalDims.h || 0);
+  const targetLongest = longest > 0 ? Math.min(longest, targetSize) : targetSize;
+
+  const thumbState = {
+    ...imageState,
+    transforms: {
+      ...(imageState.transforms || {}),
+      resize: { mode: 'longestSide', value: Math.max(1, Math.round(targetLongest)) },
+    },
+  };
+  return renderForExport(thumbState, { format: 'jpeg', quality: 0.7 }, caps, lifecycle);
+}
+
 function normalizeMime(format) {
   if (!format) return 'image/png';
   const f = String(format).toLowerCase();

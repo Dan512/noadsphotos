@@ -569,6 +569,32 @@ test('effectiveImageSize: resize exact without height uses value for both', () =
   assert.deepStrictEqual(out, { w: 64, h: 64 });
 });
 
+test('effectiveImageSize: resize percent scales both axes uniformly', () => {
+  // 10% of 1024×1024 — matches the user-reported regression scenario.
+  const out = effectiveImageSize(makeImageState({
+    w: 1024, h: 1024,
+    resize: { mode: 'percent', value: 10 },
+  }));
+  assert.ok(near(out.w, 102.4));
+  assert.ok(near(out.h, 102.4));
+});
+
+test('effectiveImageSize: resize percent at 200% doubles dims', () => {
+  const out = effectiveImageSize(makeImageState({
+    w: 100, h: 50,
+    resize: { mode: 'percent', value: 200 },
+  }));
+  assert.deepStrictEqual(out, { w: 200, h: 100 });
+});
+
+test('effectiveImageSize: resize percent preserves aspect ratio', () => {
+  const out = effectiveImageSize(makeImageState({
+    w: 800, h: 600,
+    resize: { mode: 'percent', value: 50 },
+  }));
+  assert.deepStrictEqual(out, { w: 400, h: 300 });
+});
+
 test('effectiveImageSize: chained crop → rotate → resize', () => {
   const out = effectiveImageSize(makeImageState({
     w: 200, h: 100,

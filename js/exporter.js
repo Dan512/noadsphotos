@@ -241,6 +241,111 @@ export async function exportBatch(opts = {}) {
   return { count: successCount, failed, cancelled: false };
 }
 
+/**
+ * Like exportBatch, but instead of bundling into a ZIP, triggers an individual
+ * file download per image. Sequential — yields ~250ms between downloads so the
+ * browser handles them gracefully (most browsers throttle rapid auto-downloads;
+ * the first 2-3 may pass silently, after which Chrome prompts the user to
+ * approve "multiple downloads from this site"). Useful especially on mobile,
+ * where saving a ZIP requires a file-manager unzip step.
+ *
+ * Reuses the same render pipeline, progress modal, and filename template as
+ * exportBatch.
+ *
+ * @returns {Promise<{ count: number, failed: number, cancelled: boolean } | null>}
+ */
+export async function exportEachIndividually(opts = {}) {
+  const lifecycle = opts.lifecycle || ctxLifecycle;
+  const caps = opts.caps || ctxCaps;
+  if (!lifecycle || !caps) {
+    showToast(t('exportNotReady'), { variant: 'error' });
+    return null;
+  }
+
+  const s = getState();
+  const ids = [...s.queue];
+  if (ids.length === 0) {
+    showToast(t('exportQueueEmpty'), { variant: 'warn' });
+    return null;
+  }
+
+  const format = opts.format || s.export.format || 'png';
+  const quality = Number.isFinite(opts.quality) ? opts.quality : s.export.quality;
+  const filenameTemplate = opts.filenameTemplate || s.export.filenameTemplate || '{base}-edited';
+
+  // For "Each individually" we don't pre-warn at 500MB (since nothing is held
+  // in memory across images — peak memory is one image at a time). But we do
+  // warn at high file count, because each one is a browser download prompt /
+  // dock notification.
+  if (ids.length > 20) {
+    const proceed = await confirmHugeBatch(0, ids.length, /* asIndividual */ true);
+    if (!proceed) return { count: 0, failed: 0, cancelled: true };
+  }
+
+  const progress = openBatchProgressModal(ids, s.images);
+  let cancelled = false;
+  progress.onCancel(() => { cancelled = true; });
+
+  let failed = 0;
+  let successCount = 0;
+  const usedNames = new Set();
+
+  for (let i = 0; i < ids.length; i++) {
+    if (cancelled) break;
+    const id = ids[i];
+    const img = (getState().images || {})[id];
+    if (!img) {
+      progress.itemUpdate(i, 'skipped', '(removed)');
+      failed += 1;
+      continue;
+    }
+    progress.itemUpdate(i, 'encoding', null);
+
+    try {
+      const blob = await renderForExport(img, { format, quality }, caps, lifecycle);
+      const baseName = applyFilenameTemplate(filenameTemplate, img, i, format, ids.length);
+      const name = uniquifyName(baseName, usedNames);
+      usedNames.add(name);
+      triggerDownload(blob, name);
+      successCount += 1;
+      progress.itemUpdate(i, 'done', name);
+    } catch (err) {
+      failed += 1;
+      progress.itemUpdate(i, 'failed', err && err.message ? String(err.message) : 'error');
+    }
+
+    progress.tick(i + 1, ids.length);
+
+    if (id !== getState().ui.activeImageId && lifecycle && typeof lifecycle.evictAfterUse === 'function') {
+      try { lifecycle.evictAfterUse(id); } catch { /* ignore */ }
+    }
+
+    // Yield to let the browser process the download before triggering the
+    // next one. Without this, rapid <a download> clicks get coalesced and
+    // the browser silently drops some.
+    if (i < ids.length - 1 && !cancelled) {
+      await new Promise(r => setTimeout(r, 250));
+    }
+  }
+
+  progress.close();
+
+  if (cancelled) {
+    showToast(t('exportCancelled'), { variant: 'warn' });
+    return { count: successCount, failed, cancelled: true };
+  }
+  if (successCount === 0) {
+    showToast(t('exportNothingSucceeded'), { variant: 'error' });
+    return { count: 0, failed, cancelled: false };
+  }
+  if (failed > 0) {
+    showToast(t('exportBatchPartial', { count: successCount, failed }), { variant: 'warn' });
+  } else {
+    showToast(t('exportBatchDone', { count: successCount }), { variant: 'info' });
+  }
+  return { count: successCount, failed, cancelled: false };
+}
+
 // --- helpers ---------------------------------------------------------------
 
 // Per-session flag so we only show the "blur won't bake" warning once.
@@ -542,13 +647,18 @@ function openBatchProgressModal(ids, images) {
 }
 
 // Warn-and-confirm modal for very large batches. Resolves to a boolean.
-function confirmHugeBatch(estimatedMB, count) {
+function confirmHugeBatch(estimatedMB, count, asIndividual = false) {
   return new Promise(resolve => {
     const dialog = document.createElement('dialog');
     dialog.className = 'batch-confirm-dialog';
+    // "Each individually" doesn't have a MB total worth quoting (no aggregate
+    // in memory). Use a count-only message; the ZIP path keeps the size hint.
+    const body = asIndividual
+      ? t('batchConfirmHugeIndividual', { count })
+      : t('batchConfirmHuge', { count, mb: Math.round(estimatedMB) });
     dialog.innerHTML = `
       <h2>${escapeHtml(t('batchConfirmHeadsUp'))}</h2>
-      <p>${t('batchConfirmHuge', { count, mb: Math.round(estimatedMB) })}</p>
+      <p>${body}</p>
       <div class="batch-confirm-actions">
         <button type="button" class="batch-confirm-cancel">${escapeHtml(t('batchConfirmCancel'))}</button>
         <button type="button" class="batch-confirm-continue btn-primary">${escapeHtml(t('batchConfirmContinue'))}</button>

@@ -1579,6 +1579,22 @@ main#workspace:has(> #editor-view:not([hidden])) {
   padding: var(--space-md);
 }
 
+/* Secondary export button — same shape, visually quieter. Sits below
+   the primary Export queue (ZIP) button. */
+.batch-apply-secondary {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-control);
+  font: inherit;
+  cursor: pointer;
+  margin-top: var(--space-xs);
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+.batch-apply-secondary:hover { background-color: var(--surface-2); }
+.batch-apply-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+
 /* --- Thumb (batch) badge --- */
 .queue-thumb-batch-badge {
   position: absolute;

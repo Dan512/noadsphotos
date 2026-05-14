@@ -365,6 +365,14 @@ export function effectiveImageSize(imageState) {
           : value;
         break;
       }
+      case 'percent': {
+        // 'percent' scales both axes uniformly by value/100.
+        // value=10 → 10% of original. value=200 → 2× original.
+        const factor = value / 100;
+        w = w * factor;
+        h = h * factor;
+        break;
+      }
       default:
         // Unknown mode → leave dims as-is.
         break;
