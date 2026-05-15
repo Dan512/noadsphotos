@@ -548,11 +548,11 @@ footer button:hover {
 .queue-empty {
   display: grid;
   place-items: center;
-  min-height: 50vh;
-  padding: var(--space-2xl);
+  min-height: 180px;
+  padding: var(--space-xl);
   border: 1px dashed var(--border);
   border-radius: var(--radius-card);
-  margin: var(--space-xl);
+  margin: var(--space-lg);
 }
 
 .queue-empty p {
