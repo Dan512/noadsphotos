@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   newRedactOverlay,
   drawRedact,
+  applyRedactFx,
   redactBounds,
   REDACT_MODES,
 } from '../../js/ops/redact.js';
@@ -89,26 +90,20 @@ test('newRedactOverlay: each call has a unique id', () => {
   assert.notEqual(a.id, b.id);
 });
 
-// --- drawRedact -----------------------------------------------------------
+// --- drawRedact (selection indicator only) -------------------------------
 
-test('drawRedact: fills the region with a translucent rect', () => {
-  const ctx = makeMockCtx();
-  drawRedact(ctx, newRedactOverlay(10, 20, 100, 80));
-  const fills = callsOfType(ctx, 'fillRect');
-  // First fillRect = the translucent placeholder; later fillRect = label backdrop.
-  assert.ok(fills.length >= 1);
-  assert.deepEqual(fills[0], ['fillRect', 10, 20, 100, 80]);
-});
-
-test('drawRedact: strokes a dotted border (setLineDash called)', () => {
+test('drawRedact: strokes a dashed selection border (setLineDash called)', () => {
   const ctx = makeMockCtx();
   drawRedact(ctx, newRedactOverlay(10, 20, 100, 80));
   const dashes = callsOfType(ctx, 'setLineDash');
-  assert.ok(dashes.length >= 1);
-  // First setLineDash should set a non-empty pattern.
-  assert.ok(Array.isArray(dashes[0][1]) && dashes[0][1].length > 0);
-  // strokeRect should be called for the border.
-  assert.equal(callsOfType(ctx, 'strokeRect').length, 1);
+  // First call empties any prior dash, second sets the dashed pattern,
+  // last call clears the dash again for the label. We just assert that at
+  // least one dashed pattern was set.
+  const hadDashed = dashes.some(d => Array.isArray(d[1]) && d[1].length > 0);
+  assert.ok(hadDashed, 'expected at least one dashed setLineDash call');
+  // strokeRect should be called for the border (the dashed + dark-backing
+  // two-tone outline calls strokeRect at least once).
+  assert.ok(callsOfType(ctx, 'strokeRect').length >= 1);
 });
 
 test('drawRedact: emits a label fillText with mode + strength', () => {
@@ -134,21 +129,6 @@ test('drawRedact: wraps in save/restore', () => {
   assert.equal(callsOfType(ctx, 'restore').length, 1);
 });
 
-test('drawRedact: pixelate mode uses different alpha than blur', () => {
-  const blurCtx = makeMockCtx();
-  drawRedact(blurCtx, newRedactOverlay(0, 0, 10, 10, { mode: 'blur' }));
-  const pixCtx = makeMockCtx();
-  drawRedact(pixCtx, newRedactOverlay(0, 0, 10, 10, { mode: 'pixelate' }));
-
-  // Find the first fillStyle write that's an rgba(...) color (the placeholder).
-  const blurFill = blurCtx._calls.find(c => c[0] === 'set:fillStyle' && /rgba/.test(c[1]));
-  const pixFill  = pixCtx._calls.find(c =>  c[0] === 'set:fillStyle' && /rgba/.test(c[1]));
-  assert.ok(blurFill && pixFill);
-  // The two modes use distinct alpha values so a colorblind user can tell
-  // them apart visually without colour.
-  assert.notEqual(blurFill[1], pixFill[1]);
-});
-
 test('drawRedact: zero-size region is a no-op', () => {
   const ctx = makeMockCtx();
   drawRedact(ctx, newRedactOverlay(10, 20, 0, 0));
@@ -160,6 +140,31 @@ test('drawRedact: no-op on missing ctx or overlay', () => {
   drawRedact(null, newRedactOverlay(0, 0, 10, 10));
   drawRedact(makeMockCtx(), null);
   assert.ok(true);
+});
+
+// --- applyRedactFx (export) -----------------------------------------------
+
+test('applyRedactFx: exists as a callable export', () => {
+  assert.equal(typeof applyRedactFx, 'function');
+});
+
+test('applyRedactFx: no-op on null ctx / overlay (defensive)', () => {
+  applyRedactFx(null, { x: 0, y: 0, w: 10, h: 10, mode: 'blur', strength: 4 });
+  applyRedactFx({ canvas: { width: 10, height: 10 } }, null);
+  // No throw = pass.
+  assert.ok(true);
+});
+
+test('applyRedactFx: no-op when canvas has zero dims', () => {
+  // No drawImage/etc. should fire because we early-return. Use a tiny stub.
+  let drewAnything = false;
+  const ctx = {
+    canvas: { width: 0, height: 0 },
+    drawImage: () => { drewAnything = true; },
+    clearRect: () => { drewAnything = true; },
+  };
+  applyRedactFx(ctx, { x: 0, y: 0, w: 5, h: 5, mode: 'pixelate', strength: 4 });
+  assert.equal(drewAnything, false);
 });
 
 // --- redactBounds ---------------------------------------------------------

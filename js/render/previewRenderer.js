@@ -18,7 +18,7 @@ import { cssFilterString } from '../ops/adjust.js';
 import { drawText } from '../ops/text.js';
 import { drawBrush } from '../ops/brush.js';
 import { drawShape } from '../ops/shape.js';
-import { drawRedact } from '../ops/redact.js';
+import { drawRedact, applyRedactFx } from '../ops/redact.js';
 import { drawOverlaySync, getOverlayBounds } from '../overlays.js';
 import { getSetting } from '../settings.js';
 
@@ -29,11 +29,15 @@ import { getSetting } from '../settings.js';
 // brush is wrapped so the renderer can pass the user's
 // `smoothBrushStrokes` setting through to drawBrush without every caller
 // having to know about it.
+// Redact is intentionally a no-op here: its actual effect is baked into the
+// BASE canvas (see applyRedactsToBase below), not painted onto the overlay
+// canvas as a separate layer. The selection indicator for a selected redact
+// is drawn out-of-band in drawSelection().
 const overlayDrawers = Object.freeze({
   text:   drawText,
   brush:  (ctx, brush) => drawBrush(ctx, brush, { smooth: getSetting('smoothBrushStrokes') !== false }),
   shape:  drawShape,
-  redact: drawRedact,
+  redact: () => { /* baked into base; nothing to draw on overlay canvas */ },
 });
 
 const FRAME_PADDING = 16; // pixels inside .canvas-frame reserved for the zoom controls + margin
@@ -185,6 +189,35 @@ function sourceToCanvasInternal(p, ds) {
   x += ds.canvasW / 2;
   y += ds.canvasH / 2;
   return { x, y };
+}
+
+// Map a source-pixel rect to its axis-aligned bounding box in canvas-internal
+// pixel space, using the supplied draw-state. For 0/90/180/270 rotations the
+// result is exact; for arbitrary rotations the AABB envelopes the rotated
+// rect (the redact effect then covers a few extra pixels in the corners,
+// which is harmless — better that than missing pixels inside the user's
+// region).
+function sourceRectToCanvasAABB(r, ds) {
+  if (!r || !ds) return null;
+  const corners = [
+    { x: r.x,        y: r.y        },
+    { x: r.x + r.w,  y: r.y        },
+    { x: r.x + r.w,  y: r.y + r.h  },
+    { x: r.x,        y: r.y + r.h  },
+  ];
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const c of corners) {
+    const p = sourceToCanvasInternal(c, ds);
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y > maxY) maxY = p.y;
+  }
+  const x = Math.max(0, Math.floor(minX));
+  const y = Math.max(0, Math.floor(minY));
+  const w = Math.max(1, Math.ceil(maxX - minX));
+  const h = Math.max(1, Math.ceil(maxY - minY));
+  return { x, y, w, h };
 }
 
 // Apply the renderer's current SOURCE → canvas-internal-pixel forward
@@ -462,8 +495,40 @@ export function initPreviewRenderer(lifecycle, caps) {
       -ds.drawW / 2, -ds.drawH / 2, ds.drawW, ds.drawH,
     );
     baseCtx.restore();
+
+    // Apply redact overlays directly to the base canvas. Each redact overlay
+    // is rectangular in source-pixel space; we transform its corners through
+    // the same forward transform the bitmap took, take the AABB, then call
+    // applyRedactFx on the base canvas in raw-pixel coords. For arbitrary
+    // rotations this can include a small sliver of pixels just outside the
+    // user's rectangle (the AABB envelope), but for 0/90/180/270 — the only
+    // rotations the toolbar offers — the mapping stays axis-aligned.
+    applyRedactsToBase(img, ds);
+
     return true;
   }
+
+  // Apply each redact overlay's pixelate/blur effect to the base canvas in
+  // place. Source-space coords are converted to canvas-internal pixels via
+  // the renderer's forward transform.
+  function applyRedactsToBase(img, ds) {
+    const overlays = img && Array.isArray(img.overlays) ? img.overlays : null;
+    if (!overlays || overlays.length === 0) return;
+    for (const o of overlays) {
+      if (!o || o.type !== 'redact') continue;
+      const rect = sourceRectToCanvasAABB(o, ds);
+      if (!rect) continue;
+      // The blur strength is given in SOURCE pixels; scale by drawScale so
+      // the radius is visually similar between preview and export (export
+      // operates at source resolution, where strength is the literal radius).
+      const scaledStrength = Math.max(1, Math.round(o.strength * (ds.drawScale || 1)));
+      applyRedactFx(baseCtx, {
+        x: rect.x, y: rect.y, w: rect.w, h: rect.h,
+        mode: o.mode, strength: scaledStrength,
+      }, caps);
+    }
+  }
+
 
   // Compute and write the CSS filter for the active image. Blur is given in
   // SOURCE pixels by the state, but on screen the image may be scaled (fit
@@ -524,9 +589,17 @@ export function initPreviewRenderer(lifecycle, caps) {
       // coordinate (srcX, srcY) lands exactly where the cropped region's
       // top-left lands in the base canvas.
       overlayCtx.translate(-ds.srcX - ds.srcW / 2, -ds.srcY - ds.srcH / 2);
+      // The selected redact overlay gets its dashed bounding-box + label
+      // drawn here so the user can see what they're editing. The actual
+      // pixel effect is baked into the base canvas in applyRedactsToBase.
+      const sSel = getState();
+      const selectedId = sSel.ui && sSel.ui.selectedOverlayId;
       for (const o of overlays) {
         try {
           drawOverlaySync(overlayCtx, o, overlayDrawers);
+          if (o && o.type === 'redact' && selectedId && o.id === selectedId) {
+            drawRedact(overlayCtx, o);
+          }
         } catch (err) {
           // Unknown overlay types (Phase 7B not yet implemented) throw —
           // log once per frame rather than spamming.
@@ -683,6 +756,17 @@ export function initPreviewRenderer(lifecycle, caps) {
     // every tick so changes propagate even without baseDirty.
     applyCssFilter(img);
 
+    // Redact overlays modify the BASE canvas (their effect is read-from /
+    // write-to base pixels). When overlays change, if any redact overlays
+    // exist for this image we also have to re-bake the base — otherwise a
+    // strength/mode tweak or a fresh redact wouldn't actually be visible
+    // until something else dirtied the base. We keep the dirty-flag map in
+    // renderCache.js clean (OVERLAY → overlays only) by handling the
+    // base-dirty escalation here instead.
+    if (img.overlaysDirty && hasRedactOverlay(img)) {
+      img.baseDirty = true;
+    }
+
     if (img.baseDirty) {
       const drawn = drawBase(img);
       if (drawn) markClean(img, 'base');
@@ -695,6 +779,15 @@ export function initPreviewRenderer(lifecycle, caps) {
       drawOverlays(img);
       markClean(img, 'overlays');
     }
+  }
+
+  function hasRedactOverlay(img) {
+    const overlays = img && Array.isArray(img.overlays) ? img.overlays : null;
+    if (!overlays) return false;
+    for (const o of overlays) {
+      if (o && o.type === 'redact') return true;
+    }
+    return false;
   }
 
   // Kick a redirty + size recompute on viewport resize. Use ResizeObserver

@@ -76,7 +76,7 @@ async function dragCanvas(page, fx1, fy1, fx2, fy2) {
 
 // --- tests --------------------------------------------------------------
 
-test('redact tool: side panel shows mode toggle + strength slider', async ({ page }) => {
+test('redact tool: side panel shows mode toggle, strength slider, Apply', async ({ page }) => {
   await resetApp(page);
   await setupEditorWithImage(page);
   await activateRedactTool(page);
@@ -84,7 +84,34 @@ test('redact tool: side panel shows mode toggle + strength slider', async ({ pag
   await expect(page.locator('#panel-tool .redact-mode-blur')).toBeVisible();
   await expect(page.locator('#panel-tool .redact-mode-pixelate')).toBeVisible();
   await expect(page.locator('#panel-tool .redact-strength')).toBeVisible();
+  await expect(page.locator('#panel-tool .redact-apply')).toBeVisible();
   await expect(page.locator('#panel-tool .redact-hint')).toBeVisible();
+});
+
+test('redact tool: Apply deselects the current redact (overlay stays in state)', async ({ page }) => {
+  await resetApp(page);
+  const id = await setupEditorWithImage(page, 400, 200);
+  await activateRedactTool(page);
+  await dragCanvas(page, 0.2, 0.3, 0.8, 0.7);
+
+  // Sanity: after drag the new overlay is selected.
+  const selBefore = await page.evaluate(async () => {
+    const { getState } = await import('/js/state.js');
+    return getState().ui.selectedOverlayId;
+  });
+  expect(selBefore).not.toBeNull();
+
+  await page.locator('#panel-tool .redact-apply').click();
+
+  const result = await page.evaluate(async (id) => {
+    const { getState } = await import('/js/state.js');
+    return {
+      selected: getState().ui.selectedOverlayId,
+      count: getState().images[id].overlays.length,
+    };
+  }, id);
+  expect(result.selected).toBeNull();
+  expect(result.count).toBe(1);
 });
 
 test('redact tool: drag creates a redact overlay in state', async ({ page }) => {

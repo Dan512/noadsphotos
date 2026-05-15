@@ -2,21 +2,14 @@
 //
 // Pure module: depends only on a 2D context API.
 //
-// IMPORTANT v1 LIMITATION:
-//   The overlay canvas in the live preview pipeline sits ABOVE the base
-//   image canvas and does NOT have access to the rendered base pixels.
-//   That means a "live" blur/pixelate effect over the region would require
-//   either reading back from the base canvas every frame (expensive) or
-//   keeping a synchronised offscreen copy of the rendered base (memory).
+// The effect is applied DIRECTLY to the base canvas (live preview) and the
+// export canvas — by reading pixels back from the target ctx, processing,
+// and writing them back over the same region. See applyRedactFx() below.
 //
-//   For v1 the redact overlay paints a translucent placeholder showing
-//   WHERE the region is, plus a small label indicating the chosen mode +
-//   strength. The actual blur/pixelate is baked into the export pipeline
-//   (Phase 9), where we have direct pixel access to the rendered output.
-//
-//   This is acknowledged in the design doc as a v2 nicety; the trade-off
-//   is documented here so future maintainers don't try to do too much in
-//   the renderer.
+// `drawRedact()` is now ONLY the selection indicator (dashed border + small
+// mode/strength label). The actual pixel-mutating effect lives in
+// `applyRedactFx()` and is invoked by the preview/export renderers
+// against the base canvas, not the overlay canvas.
 
 const DEFAULT_MODE = 'blur';
 const DEFAULT_STRENGTH = 12;
@@ -38,17 +31,149 @@ export function newRedactOverlay(x, y, w, h, opts = {}) {
 }
 
 /**
- * Draw the redact region for the live preview. See module-level note —
- * this is a PLACEHOLDER visualisation, not the actual blurred/pixelated
- * result.
+ * Bake the redact effect into the supplied canvas context, in-place. Reads
+ * from the canvas, blurs/pixelates the region, writes back. Used by both
+ * the preview and the export pipeline.
  *
- * Visual recipe:
- *   - Translucent fill so the underlying image shows through, with a
- *     slightly different alpha for blur vs pixelate so the two modes are
- *     visually distinguishable without relying solely on the label text.
- *   - Dotted white border to mark the rectangle clearly.
- *   - Mode + strength label at the top-left corner with a dark backdrop
- *     so the white text stays legible against any image content.
+ * The caller must have already applied any source→canvas-pixel transform
+ * before invoking this — the (x, y, w, h) rect is taken as already being
+ * in the context's CURRENT user-coordinate space (which for our renderers
+ * is source-pixel space when this is called).
+ *
+ * @param {CanvasRenderingContext2D|OffscreenCanvasRenderingContext2D} ctx
+ * @param {{ x:number, y:number, w:number, h:number,
+ *           mode:'blur'|'pixelate', strength:number }} r
+ * @param {{ ctxFilter?: boolean }} [caps]  - capability probe; when
+ *   `ctx.filter` is unavailable, blur falls back to pixelate so the user
+ *   gets _some_ redaction rather than no effect.
+ */
+export function applyRedactFx(ctx, r, caps) {
+  if (!ctx || !r) return;
+  const x = Math.max(0, Math.round(r.x));
+  const y = Math.max(0, Math.round(r.y));
+  const w = Math.max(1, Math.round(r.w));
+  const h = Math.max(1, Math.round(r.h));
+  if (w <= 0 || h <= 0) return;
+  const strength = Math.max(1, Math.round(Number.isFinite(r.strength) ? r.strength : DEFAULT_STRENGTH));
+
+  // Clamp the region against the canvas so we never sample/write out of bounds.
+  const canvasW = ctx.canvas && ctx.canvas.width;
+  const canvasH = ctx.canvas && ctx.canvas.height;
+  if (!canvasW || !canvasH) return;
+  const cx = Math.min(x, Math.max(0, canvasW - 1));
+  const cy = Math.min(y, Math.max(0, canvasH - 1));
+  const cw = Math.min(w, Math.max(1, canvasW - cx));
+  const ch = Math.min(h, Math.max(1, canvasH - cy));
+  if (cw <= 0 || ch <= 0) return;
+
+  const mode = MODES.includes(r.mode) ? r.mode : DEFAULT_MODE;
+  if (mode === 'pixelate') {
+    applyPixelate(ctx, cx, cy, cw, ch, strength);
+  } else {
+    if (caps && caps.ctxFilter === false) {
+      // Graceful fallback when ctx.filter is unavailable (very old browsers).
+      applyPixelate(ctx, cx, cy, cw, ch, strength);
+    } else {
+      applyBlur(ctx, cx, cy, cw, ch, strength);
+    }
+  }
+}
+
+function applyPixelate(ctx, x, y, w, h, blockSize) {
+  // Strength is the literal pixel size of each block in canvas-pixel space.
+  // We downsample the region with smoothing ENABLED (so each output pixel is
+  // a multi-pixel average), then upsample back to full size with smoothing
+  // DISABLED — that produces uniform chunky blocks whose color is the mean
+  // of the underlying pixels, the visual effect users expect from
+  // "pixelate" (and the effect that actually destroys recognizability,
+  // unlike pure nearest-neighbor downsampling which just picks one source
+  // pixel per block).
+  const smallW = Math.max(1, Math.floor(w / blockSize));
+  const smallH = Math.max(1, Math.floor(h / blockSize));
+  const temp = createWorkCanvas(smallW, smallH);
+  if (!temp) return;
+  const tCtx = temp.getContext('2d');
+  if (!tCtx) return;
+  // Average the region into temp.
+  tCtx.imageSmoothingEnabled = true;
+  if ('imageSmoothingQuality' in tCtx) tCtx.imageSmoothingQuality = 'high';
+  // Source the region from the live canvas.
+  try {
+    tCtx.drawImage(ctx.canvas, x, y, w, h, 0, 0, smallW, smallH);
+  } catch {
+    // Tainted canvas or other read failure — silently skip.
+    return;
+  }
+  // Write it back at full size with smoothing off — chunky blocks.
+  const prevSmoothing = ctx.imageSmoothingEnabled;
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.imageSmoothingEnabled = false;
+  ctx.clearRect(x, y, w, h);
+  ctx.drawImage(temp, 0, 0, smallW, smallH, x, y, w, h);
+  ctx.restore();
+  ctx.imageSmoothingEnabled = prevSmoothing;
+}
+
+function applyBlur(ctx, x, y, w, h, strength) {
+  // Use a temporary canvas with ctx.filter for a clean Gaussian blur. Expand
+  // the read by the blur radius so edges don't darken from sampling outside
+  // the region.
+  const r = strength;
+  const sx = Math.max(0, x - r);
+  const sy = Math.max(0, y - r);
+  const sw = Math.min(ctx.canvas.width  - sx, w + r * 2);
+  const sh = Math.min(ctx.canvas.height - sy, h + r * 2);
+  if (sw <= 0 || sh <= 0) return;
+  const temp = createWorkCanvas(sw, sh);
+  if (!temp) return;
+  const tCtx = temp.getContext('2d');
+  if (!tCtx) return;
+  tCtx.filter = `blur(${r}px)`;
+  try {
+    tCtx.drawImage(ctx.canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+  } catch {
+    // Tainted canvas or other read failure — silently skip.
+    return;
+  }
+  // Now clip back to the user's actual region and draw the blurred temp
+  // back onto the original canvas at the same position. The clip path
+  // ensures blurred edges outside the requested region don't leak.
+  ctx.save();
+  // Drop any active transform so the clip rect and drawImage use raw
+  // canvas pixels — matches the coords we just used to read.
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.beginPath();
+  ctx.rect(x, y, w, h);
+  ctx.clip();
+  ctx.clearRect(x, y, w, h);
+  ctx.drawImage(temp, 0, 0, sw, sh, sx, sy, sw, sh);
+  ctx.restore();
+}
+
+function createWorkCanvas(w, h) {
+  // OffscreenCanvas when available (workers + main thread on Chrome/FF),
+  // fallback to a detached <canvas> element.
+  if (typeof OffscreenCanvas !== 'undefined') {
+    try { return new OffscreenCanvas(w, h); } catch { /* fall through */ }
+  }
+  if (typeof document !== 'undefined') {
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    return c;
+  }
+  return null;
+}
+
+/**
+ * Selection-indicator draw — dashed bounding box + small mode/strength label
+ * in the corner. Used ONLY when this redact overlay is the selected one (so
+ * the user can see what they're editing). NOT the effect itself; the effect
+ * is handled by applyRedactFx() against the base/export canvas.
+ *
+ * Kept as the `drawRedact` export so the renderer's `overlayDrawers` map and
+ * the dynamic dispatch in overlays.js keep working unchanged — but it now
+ * only draws the indicator, not the placeholder fill.
  */
 export function drawRedact(ctx, r) {
   if (!ctx || !r) return;
@@ -58,21 +183,20 @@ export function drawRedact(ctx, r) {
 
   ctx.save();
 
-  // Translucent fill. Pixelate uses slightly less alpha so the two modes
-  // are visually distinguishable without colour (Dan is colorblind).
-  ctx.fillStyle = r.mode === 'pixelate'
-    ? 'rgba(0, 0, 0, 0.35)'
-    : 'rgba(0, 0, 0, 0.45)';
-  ctx.fillRect(r.x, r.y, w, h);
-
-  // Dotted white border.
-  ctx.strokeStyle = '#ffffff';
+  // Dashed white border so the region is visible on top of the now-actually-
+  // -applied effect. Two-tone (dark backing + white dashes) keeps it legible
+  // against any image content without relying on hue.
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.6)';
+  ctx.setLineDash([]);
+  ctx.lineWidth = 3;
+  ctx.strokeRect(r.x, r.y, w, h);
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
   ctx.setLineDash([8, 4]);
   ctx.lineWidth = 2;
   ctx.strokeRect(r.x, r.y, w, h);
   ctx.setLineDash([]);
 
-  // Mode label in the top-left.
+  // Small mode label at the top-left.
   ctx.font = '500 12px Onest, system-ui, sans-serif';
   ctx.textBaseline = 'top';
   const label = r.mode === 'pixelate'

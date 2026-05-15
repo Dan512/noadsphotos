@@ -3,22 +3,27 @@
 // Behavior summary:
 //   - Activates when state.ui.activeTool === 'redact' (editor view + active
 //     image).
-//   - Side panel has mode toggle (Blur / Pixelate) and strength slider 2..40.
+//   - Side panel has mode toggle (Blur / Pixelate), strength slider 2..40,
+//     and an Apply button.
 //   - pointerdown:  record drag start.
 //   - pointermove:  update an in-progress rect via setOverlayDrawer (NOT in
 //                   state).
 //   - pointerup:    commit a new redact overlay if the drag moved beyond
-//                   click slop; discard otherwise.
+//                   click slop; discard otherwise. The new overlay is
+//                   selected so the panel can keep editing it.
+//   - mode/strength changes:  patch the SELECTED redact overlay (live).
+//   - Apply: deselect — returns the tool to "ready to draw a new rect"
+//            without removing the committed overlay.
 //
-// The final blur/pixelate is baked at export (Phase 9); the live preview
-// shows a translucent placeholder + dotted border + mode/strength label.
-// See ops/redact.js for the rationale.
+// The actual blur/pixelate is applied LIVE to the base canvas by the
+// preview renderer (see js/render/previewRenderer.js) and to the export
+// canvas by the export renderer. See ops/redact.js for the effect impl.
 
 import { attachPointer } from '../pointer.js';
 import { getState, subscribe, update } from '../state.js';
 import { setToolPanel, clearToolPanel } from '../editor.js';
 import { newRedactOverlay, drawRedact, REDACT_MODES } from '../ops/redact.js';
-import { addOverlay } from '../overlays.js';
+import { addOverlay, getOverlay, updateOverlay } from '../overlays.js';
 import { withOverlaysHistory } from '../historyOps.js';
 import { t } from '../i18n.js';
 import {
@@ -37,7 +42,7 @@ let toolStrength = 12;
 
 let drawing = null; // { x1, y1, x2, y2 } in source-pixel space
 
-let panelEls = null; // { modeBtns, strengthInput, strengthReadout }
+let panelEls = null; // { modeBtns, strengthInput, strengthReadout, applyBtn }
 
 const CLICK_SLOP_SRC = 1;
 const MIN_STRENGTH = 2;
@@ -53,6 +58,32 @@ function handleStateChange() {
   const want = s.ui.view === 'editor' && s.ui.activeTool === 'redact';
   if (want && !active) activate();
   else if (!want && active) deactivate();
+  else if (want && active) syncPanelFromSelection();
+}
+
+// When the user selects an existing redact overlay (via the Overlays panel
+// or by clicking on it), sync the tool's mode/strength state + the panel
+// inputs so subsequent edits land on that overlay's existing values rather
+// than the tool's stale toolbar defaults.
+function syncPanelFromSelection() {
+  if (!panelEls) return;
+  const img = getActiveImage();
+  if (!img) return;
+  const s = getState();
+  const id = s.ui && s.ui.selectedOverlayId;
+  if (!id) return;
+  const o = getOverlay(img, id);
+  if (!o || o.type !== 'redact') return;
+  if (o.mode && o.mode !== toolMode) {
+    toolMode = o.mode;
+    syncModeBtns();
+  }
+  const sNum = Number(o.strength);
+  if (Number.isFinite(sNum) && sNum !== toolStrength) {
+    toolStrength = sNum;
+    panelEls.strengthInput.value = String(sNum);
+    panelEls.strengthReadout.textContent = String(Math.round(sNum));
+  }
 }
 
 function activate() {
@@ -198,6 +229,7 @@ function renderPanel() {
     btn.addEventListener('click', () => {
       toolMode = mode;
       syncModeBtns();
+      patchSelectedRedact({ mode });
     });
     modeGroup.appendChild(btn);
     modeBtns[mode] = btn;
@@ -227,6 +259,20 @@ function renderPanel() {
   strengthRow.appendChild(strengthReadout);
   root.appendChild(strengthRow);
 
+  // Apply button — "done editing this redact." Deselects so a subsequent
+  // drag starts a fresh redact instead of editing the previous one.
+  const actions = document.createElement('div');
+  actions.className = 'redact-actions';
+  const applyBtn = document.createElement('button');
+  applyBtn.type = 'button';
+  applyBtn.className = 'redact-apply btn-primary';
+  applyBtn.textContent = t('redactApply');
+  applyBtn.addEventListener('click', () => {
+    update(s => { s.ui.selectedOverlayId = null; });
+  });
+  actions.appendChild(applyBtn);
+  root.appendChild(actions);
+
   // Hint.
   const hint = document.createElement('p');
   hint.className = 'redact-hint';
@@ -234,16 +280,37 @@ function renderPanel() {
   root.appendChild(hint);
 
   setToolPanel(root, { owner: 'redact' });
-  panelEls = { modeBtns, strengthInput, strengthReadout };
+  panelEls = { modeBtns, strengthInput, strengthReadout, applyBtn };
 
   strengthInput.addEventListener('input', () => {
     const n = clampStrength(Number(strengthInput.value));
     if (!Number.isFinite(n)) return;
     toolStrength = n;
     strengthReadout.textContent = String(Math.round(n));
+    patchSelectedRedact({ strength: n });
   });
 
   syncModeBtns();
+}
+
+// Apply a patch to the currently-selected overlay IF it's a redact owned by
+// the active image. Live (no history transaction) so the slider drag updates
+// preview without spamming undo entries. The drag-end could in principle
+// snapshot history, but matching textTool's approach: the initial creation
+// records history; subsequent edits are "live" and can be re-tuned freely.
+function patchSelectedRedact(patch) {
+  const img = getActiveImage();
+  if (!img) return;
+  const s = getState();
+  const id = s.ui && s.ui.selectedOverlayId;
+  if (!id) return;
+  const o = getOverlay(img, id);
+  if (!o || o.type !== 'redact') return;
+  update(state => {
+    const target = state.images[img.id];
+    if (!target) return;
+    updateOverlay(target, id, patch);
+  });
 }
 
 function syncModeBtns() {

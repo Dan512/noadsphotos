@@ -37,14 +37,18 @@ import { drawOverlaySync } from '../overlays.js';
 import { drawText } from '../ops/text.js';
 import { drawBrush } from '../ops/brush.js';
 import { drawShape } from '../ops/shape.js';
-import { drawRedact } from '../ops/redact.js';
+import { applyRedactFx } from '../ops/redact.js';
 import { encodeCanvas } from '../codec.js';
 
+// Redact is intentionally NOT in this map: its pixel-mutating effect runs
+// in a dedicated pass against the working canvas (see applyRedactsToCanvas)
+// before the other overlays are drawn. That ordering means text/brush/shape
+// land ON TOP of the pixelated/blurred region.
 const overlayDrawers = Object.freeze({
   text: drawText,
   brush: drawBrush,
   shape: drawShape,
-  redact: drawRedact,
+  redact: () => { /* baked separately via applyRedactFx */ },
 });
 
 /**
@@ -105,7 +109,15 @@ export async function renderForExport(imageState, opts, caps, lifecycle) {
   // 3. Apply adjustments + filter preset in-place on the working canvas.
   await applyAdjustments(ctx, canvas, imageState, caps);
 
-  // 4. Draw committed overlays in source-pixel space.
+  // 4. Apply each redact overlay's effect directly to the working canvas.
+  // Sits BETWEEN adjustments and other overlays so:
+  //   - the blur reads the post-adjustment pixels (the redaction's source
+  //     content matches what surrounds it visually), and
+  //   - text/brush/shape annotations drawn next land on top of the
+  //     pixelated/blurred region rather than under it.
+  applyRedactsToCanvas(ctx, imageState, preResize, caps);
+
+  // 5. Draw committed overlays in source-pixel space.
   drawOverlaysAtSourcePixels(ctx, imageState, preResize);
 
   // 5. If a resize directive is present, downscale to the final dims now.
@@ -319,6 +331,78 @@ async function applyAdjustments(ctx, canvas, imageState, caps) {
   }
   softwareApply(imageData, adjust, preset);
   ctx.putImageData(imageData, 0, 0);
+}
+
+// Apply each redact overlay's pixel-mutating effect to the working canvas
+// in place. The redact rect lives in SOURCE-pixel space; we transform its
+// corners through the same forward transform the bitmap took, take the
+// axis-aligned bounding box, then hand that rect off to applyRedactFx
+// (which works in canvas-pixel coords).
+//
+// For 0/90/180/270 rotations — the only ones the toolbar exposes — the AABB
+// is identical to the rotated rect. Arbitrary rotations would over-cover
+// the corners by a few pixels; harmless for redaction.
+function applyRedactsToCanvas(ctx, imageState, outDims, caps) {
+  const overlays = imageState.overlays;
+  if (!overlays || !Array.isArray(overlays) || overlays.length === 0) return;
+
+  const t = imageState.transforms || {};
+  const crop = t.crop;
+  const src = (crop && crop.w > 0 && crop.h > 0)
+    ? crop
+    : { x: 0, y: 0, w: imageState.source.width, h: imageState.source.height };
+  const rot = ((t.rotate || 0) % 360 + 360) % 360;
+  const flipH = !!t.flipH;
+  const flipV = !!t.flipV;
+  const rad = rot * Math.PI / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+
+  // Forward: source pixel → working canvas pixel. Mirrors drawTransformedSource.
+  function sourceToCanvas(sx, sy) {
+    // 1. Subtract crop center → coords in source space centered on the crop.
+    let x = sx - src.x - src.w / 2;
+    let y = sy - src.y - src.h / 2;
+    // 2. Apply flip.
+    if (flipH) x = -x;
+    if (flipV) y = -y;
+    // 3. Rotate.
+    if (rot) {
+      const rx = x * cos - y * sin;
+      const ry = x * sin + y * cos;
+      x = rx; y = ry;
+    }
+    // 4. Translate to canvas center.
+    x += outDims.w / 2;
+    y += outDims.h / 2;
+    return { x, y };
+  }
+
+  for (const o of overlays) {
+    if (!o || o.type !== 'redact') continue;
+    const corners = [
+      sourceToCanvas(o.x,         o.y        ),
+      sourceToCanvas(o.x + o.w,   o.y        ),
+      sourceToCanvas(o.x + o.w,   o.y + o.h  ),
+      sourceToCanvas(o.x,         o.y + o.h  ),
+    ];
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const c of corners) {
+      if (c.x < minX) minX = c.x;
+      if (c.y < minY) minY = c.y;
+      if (c.x > maxX) maxX = c.x;
+      if (c.y > maxY) maxY = c.y;
+    }
+    const x = Math.max(0, Math.floor(minX));
+    const y = Math.max(0, Math.floor(minY));
+    const w = Math.max(1, Math.ceil(maxX - minX));
+    const h = Math.max(1, Math.ceil(maxY - minY));
+    applyRedactFx(ctx, {
+      x, y, w, h,
+      mode: o.mode,
+      strength: o.strength,
+    }, caps);
+  }
 }
 
 // Draw committed overlays at their source-pixel coordinates. Mirrors the

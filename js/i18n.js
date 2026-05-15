@@ -317,7 +317,8 @@ export const TRANSLATIONS = {
     redactModeBlur:           'Blur',
     redactStrength:           'Strength',
     redactStrengthAria:       'Redact strength',
-    redactHint:               'Drag a region to redact. Final result baked into the export.',
+    redactApply:              'Apply',
+    redactHint:               'Drag a region to redact. Adjust strength below. Apply to finish.',
 
     // --- Eyedropper / color-to-transparent tool ---------------------------
     eyedropperTitle:          'Color to transparent',
