@@ -744,6 +744,10 @@ main#workspace:has(> #editor-view:not([hidden])) {
   gap: var(--space-sm);
   font-size: var(--t-sm);
 }
+/* `display: flex` above overrides the HTML `hidden` attribute's default
+   `display: none`. Re-assert hiding for hidden rows. */
+.editor-panel .crop-row[hidden],
+.editor-panel .resize-row[hidden] { display: none !important; }
 .editor-panel .crop-row select,
 .editor-panel .resize-row select,
 .editor-panel .crop-row input[type="text"],

@@ -83,7 +83,11 @@ export function buildChromakeyMask(imageData, hex, tolerance) {
 
   const tolNum = Number(tolerance);
   const tolClamped = Math.max(0, Math.min(100, Number.isFinite(tolNum) ? tolNum : 0));
-  const rawTol = tolClamped * 0.8;        // 0..80
+  // Map slider 0..100 to RGB distance 0..160 (doubled from the previous
+  // 0..80 range). Users reported the previous scale was underpowered for
+  // anti-aliased / lightly-compressed backgrounds — slider 100 now matches
+  // what would previously have required slider 200.
+  const rawTol = tolClamped * 1.6;         // 0..160
   const softness = rawTol * 0.25;          // 25% soft edge band
 
   const total = width * height;

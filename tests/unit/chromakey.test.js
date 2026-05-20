@@ -198,8 +198,12 @@ const STRIP = [
   [255, 255, 255], // white: dist 441
 ];
 
+// NOTE: tolerance scale is slider 0..100 → rawTol 0..160 (1.6× multiplier).
+// dist(dark-gray (30,30,30) from black) ≈ 51.96, so boundaries are picked
+// to land just below or just above that distance under the new scale.
+
 test('buildChromakeyMask: 4-pixel strip, target #000, tol=10 → only black is transparent', () => {
-  // rawTol=8, softness=2. dist(dark-gray)≈52 > 10 → 255. Red, white → 255.
+  // rawTol=16, softness=4 → upper band 20. dist(dark-gray)≈52 > 20 → 255.
   const id = makeImageDataLike(STRIP);
   const mask = buildChromakeyMask(id, '#000000', 10);
   assert.equal(mask[0], 0);   // black
@@ -209,7 +213,7 @@ test('buildChromakeyMask: 4-pixel strip, target #000, tol=10 → only black is t
 });
 
 test('buildChromakeyMask: 4-pixel strip, tol=20 — dark-gray still out of band', () => {
-  // rawTol=16, softness=4 → max 20. dist(dark-gray)≈52 > 20 → 255.
+  // rawTol=32, softness=8 → upper band 40. dist(dark-gray)≈52 > 40 → 255.
   const id = makeImageDataLike(STRIP);
   const mask = buildChromakeyMask(id, '#000000', 20);
   assert.equal(mask[0], 0);
@@ -218,20 +222,20 @@ test('buildChromakeyMask: 4-pixel strip, tol=20 — dark-gray still out of band'
   assert.equal(mask[3], 255);
 });
 
-test('buildChromakeyMask: 4-pixel strip, tol=50 — dark-gray still out of band', () => {
-  // rawTol=40, softness=10 → max 50. dist(dark-gray)≈51.96 > 50 → 255.
+test('buildChromakeyMask: 4-pixel strip, tol=25 — dark-gray still out of band', () => {
+  // rawTol=40, softness=10 → upper band 50. dist(dark-gray)≈51.96 > 50 → 255.
   const id = makeImageDataLike(STRIP);
-  const mask = buildChromakeyMask(id, '#000000', 50);
+  const mask = buildChromakeyMask(id, '#000000', 25);
   assert.equal(mask[0], 0);
   assert.equal(mask[1], 255);
   assert.equal(mask[2], 255);
   assert.equal(mask[3], 255);
 });
 
-test('buildChromakeyMask: 4-pixel strip, tol=70 — dark-gray inside core (transparent)', () => {
+test('buildChromakeyMask: 4-pixel strip, tol=35 — dark-gray inside core (transparent)', () => {
   // rawTol=56, softness=14. dist(dark-gray)≈51.96 < 56 → 0.
   const id = makeImageDataLike(STRIP);
-  const mask = buildChromakeyMask(id, '#000000', 70);
+  const mask = buildChromakeyMask(id, '#000000', 35);
   assert.equal(mask[0], 0);
   assert.equal(mask[1], 0);   // dark-gray now matches
   assert.equal(mask[2], 255); // red still kept
@@ -253,27 +257,27 @@ test('buildChromakeyMask: tol=0 — only exact target color matches', () => {
 });
 
 // --------------------------------------------------------------------------
-// Soft-edge band: at tol=100 we have rawTol=80, softness=20.
-// Sample distances 80 / 90 / 100 should give 0 / ~128 / 255.
+// Soft-edge band: at tol=100 we have rawTol=160, softness=40 (max band: 200).
+// Sample distances 160 / 180 / 200 should give 0 / ~128 / 255.
 // --------------------------------------------------------------------------
 
 test('buildChromakeyMask: soft band — pixel exactly at rawTol → 0 (matches)', () => {
-  // tol=100, target #000. Pixel (80, 0, 0) has dist 80 == rawTol → mask 0.
-  const id = makeImageDataLike([[80, 0, 0]]);
+  // tol=100, target #000. Pixel (160, 0, 0) has dist 160 == rawTol → mask 0.
+  const id = makeImageDataLike([[160, 0, 0]]);
   const mask = buildChromakeyMask(id, '#000000', 100);
   assert.equal(mask[0], 0);
 });
 
 test('buildChromakeyMask: soft band — pixel at rawTol+softness/2 → ~128', () => {
-  // tol=100, target #000. Pixel (90, 0, 0) has dist 90 → ramp midpoint → 128.
-  const id = makeImageDataLike([[90, 0, 0]]);
+  // tol=100, target #000. Pixel (180, 0, 0) has dist 180 → ramp midpoint → 128.
+  const id = makeImageDataLike([[180, 0, 0]]);
   const mask = buildChromakeyMask(id, '#000000', 100);
   assert.ok(Math.abs(mask[0] - 128) <= 1, `expected ~128, got ${mask[0]}`);
 });
 
 test('buildChromakeyMask: soft band — pixel at rawTol+softness → 255 (kept)', () => {
-  // tol=100, target #000. Pixel (100, 0, 0) has dist 100 == rawTol+softness → 255.
-  const id = makeImageDataLike([[100, 0, 0]]);
+  // tol=100, target #000. Pixel (200, 0, 0) has dist 200 == rawTol+softness → 255.
+  const id = makeImageDataLike([[200, 0, 0]]);
   const mask = buildChromakeyMask(id, '#000000', 100);
   assert.equal(mask[0], 255);
 });

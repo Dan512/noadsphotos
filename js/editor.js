@@ -563,15 +563,17 @@ function buildResizePanel() {
     commitResizeHistory('Resize mode');
   });
   lockChk.addEventListener('change', () => {
-    // Lock toggle alone doesn't write through applyResize — keep behavior.
-    onResizeInput();
+    // Toggling lock re-runs the constrain pass; pass valueInput as the
+    // trigger so Height gets recomputed from the Width (the more common
+    // expectation when the user enables lock).
+    onResizeInput(valueInput);
   });
   valueInput.addEventListener('focus', captureResizeBefore);
-  valueInput.addEventListener('input', onResizeInput);
+  valueInput.addEventListener('input', () => onResizeInput(valueInput));
   valueInput.addEventListener('change', () => commitResizeHistory('Resize'));
   valueInput.addEventListener('blur',   () => commitResizeHistory('Resize'));
   heightInput.addEventListener('focus', captureResizeBefore);
-  heightInput.addEventListener('input', onResizeInput);
+  heightInput.addEventListener('input', () => onResizeInput(heightInput));
   heightInput.addEventListener('change', () => commitResizeHistory('Resize'));
   heightInput.addEventListener('blur',   () => commitResizeHistory('Resize'));
 }
@@ -751,15 +753,18 @@ function getActiveImage() {
   return s.images[id] || null;
 }
 
-function onResizeInput() {
+function onResizeInput(triggerEl) {
   if (!resizeEls) return;
   const img = getActiveImage();
   if (!img) return;
 
   const mode = resizeEls.modeSel.value;
-  // Show/hide height field for exact mode and lock checkbox for non-exact modes.
+  // Height field + Lock checkbox are ONLY meaningful in Exact mode, where
+  // the user specifies both dimensions independently. Every other mode
+  // either preserves aspect implicitly (longestSide/shortestSide/width/
+  // height/percent) or does nothing at all (free).
   resizeEls.heightWrap.hidden = mode !== 'exact';
-  resizeEls.lockWrap.hidden = mode === 'exact' || mode === 'free';
+  resizeEls.lockWrap.hidden = mode !== 'exact';
 
   if (mode === 'free') {
     update(s => { applyResize(s.images[img.id], null); });
@@ -776,11 +781,32 @@ function onResizeInput() {
 
   const payload = { mode, value };
   if (mode === 'exact') {
-    const heightVal = Number(resizeEls.heightInput.value);
-    if (Number.isFinite(heightVal) && heightVal > 0) {
-      payload.height = heightVal;
-    } else {
-      payload.height = value; // mirror width as a fallback
+    let heightVal = Number(resizeEls.heightInput.value);
+    if (!Number.isFinite(heightVal) || heightVal <= 0) heightVal = value;
+    payload.height = heightVal;
+
+    // If aspect lock is ON, the secondary dimension follows the source aspect
+    // ratio. Whichever field the user JUST edited drives the other one.
+    if (resizeEls.lockChk && resizeEls.lockChk.checked) {
+      const sw = img.source.width  || 0;
+      const sh = img.source.height || 0;
+      if (sw > 0 && sh > 0) {
+        const aspect = sw / sh;
+        if (triggerEl === resizeEls.heightInput) {
+          // User edited Height — recompute Width.
+          payload.value = Math.max(1, Math.round(payload.height * aspect));
+          // Reflect in the input without firing another input event.
+          if (document.activeElement !== resizeEls.valueInput) {
+            resizeEls.valueInput.value = String(payload.value);
+          }
+        } else {
+          // User edited Width (or the mode/lock toggled). Recompute Height.
+          payload.height = Math.max(1, Math.round(payload.value / aspect));
+          if (document.activeElement !== resizeEls.heightInput) {
+            resizeEls.heightInput.value = String(payload.height);
+          }
+        }
+      }
     }
   }
   update(s => { applyResize(s.images[img.id], payload); });
@@ -804,8 +830,10 @@ function syncResizePanel() {
     if (resizeEls.modeSel.value !== resize.mode && focused !== resizeEls.modeSel) {
       resizeEls.modeSel.value = resize.mode;
     }
+    // Height + Lock are only meaningful in Exact mode (see onResizeInput
+    // for the rationale).
     resizeEls.heightWrap.hidden = resize.mode !== 'exact';
-    resizeEls.lockWrap.hidden = resize.mode === 'exact';
+    resizeEls.lockWrap.hidden = resize.mode !== 'exact';
     if (focused !== resizeEls.valueInput) {
       resizeEls.valueInput.value = String(resize.value ?? '');
     }
@@ -816,7 +844,7 @@ function syncResizePanel() {
     // No resize stored. Show/hide is driven by current select value.
     const cur = resizeEls.modeSel.value;
     resizeEls.heightWrap.hidden = cur !== 'exact';
-    resizeEls.lockWrap.hidden = cur === 'exact' || cur === 'free';
+    resizeEls.lockWrap.hidden = cur !== 'exact';
   }
 
   const dims = effectiveImageSize(img);
