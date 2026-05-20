@@ -67,8 +67,8 @@ test('t() interpolates variables', () => {
 });
 
 test('t() HTML-escapes interpolated variables (XSS defense)', () => {
-  // The exportSuccess key is `Exported {filename}` — pass a hostile name.
-  const out = t('exportSuccess', { filename: '<script>alert(1)</script>' });
+  // The exportSuccessWithSize key is `Exported {filename} ({size})` — pass a hostile name.
+  const out = t('exportSuccessWithSize', { filename: '<script>alert(1)</script>', size: '1 KB' });
   assert.ok(out.includes('&lt;script&gt;'), `expected HTML-escaped, got: ${out}`);
   assert.ok(!out.includes('<script>'), `unescaped <script> present: ${out}`);
 });

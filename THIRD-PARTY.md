@@ -15,6 +15,7 @@ sends over the network. None of the libraries below have any network traffic.
 | Library                                              | Version | License        | Selected | Location                              | Purpose |
 | ---------------------------------------------------- | ------- | -------------- | -------- | ------------------------------------- | --- |
 | [JSZip](https://stuk.github.io/jszip/)               | 3.10.1  | MIT or GPL-3.0 | **MIT**  | `js/vendor/jszip.min.js`              | Batch export ZIP archive (Phase 10) |
+| [jsPDF](https://github.com/parallax/jsPDF)           | 3.0.4   | MIT            | MIT      | `js/vendor/jspdf/jspdf.umd.min.js` (~419 KB) + `LICENSE` | Image-to-PDF export (v1.1 Feature 4) |
 | [Pica](https://github.com/nodeca/pica)               | _TBD_   | MIT            | MIT      | `js/vendor/pica.min.js` _(planned)_   | High-quality resampling for large resize / oversize import (a later phase) |
 | [@imgly/background-removal](https://github.com/imgly/background-removal-js) | 1.7.0   | AGPL-3.0      | AGPL-3.0 | `js/vendor/bgremove/index.mjs` (~170 KB) + chunked data assets (~95.4 MB across 26 hash-named binary files + `resources.json`). See [`js/vendor/bgremove/.notice`](js/vendor/bgremove/.notice). | Browser-side ML background removal (Phase 11) |
 | [@imgly/background-removal-data](https://github.com/imgly/background-removal-js) (data assets) | 1.7.0 (from `staticimgly.com`) | AGPL-3.0 | AGPL-3.0 | Co-located under `js/vendor/bgremove/` (resources.json + 26 binary chunks for the CPU-only `isnet_fp16` model + the `ort-wasm-simd-threaded` runtime). | ISNET fp16 segmentation model + ONNX Runtime Web SIMD WASM kernel (data half of the bg-removal feature). |
@@ -25,6 +26,11 @@ sends over the network. None of the libraries below have any network traffic.
 - **JSZip** is dual-licensed (MIT-or-GPL-3.0). We pick **MIT**, the more
   permissive option. Attribution preserved in the unmodified
   `js/vendor/jszip.min.js` header comment.
+- **jsPDF** is **MIT**. Attribution preserved in the unmodified
+  `js/vendor/jspdf/jspdf.umd.min.js` header comment + `LICENSE` in the same
+  folder. We vendor the UMD build rather than the ES build because the ES
+  build's bare imports (`fflate`, `fast-png`, `@babel/runtime/*`) would
+  require additional vendoring.
 - **Pica** is plain MIT. Attribution preserved in the bundled header comment.
 - **@imgly/background-removal** is **AGPL-3.0** only. Vendoring this library
   is the reason the *entire* NoAdsPhotos project is licensed AGPL-3.0
@@ -35,10 +41,10 @@ sends over the network. None of the libraries below have any network traffic.
 
 ## Loading discipline
 
-- JSZip and Pica are loaded **lazily** — the `<script>` (or dynamic
+- JSZip, jsPDF, and Pica are loaded **lazily** — the `<script>` (or dynamic
   `import()`) is only fetched when the user takes the action that needs it
-  (Export queue ZIP / oversize import respectively). Users who never use
-  those features never pay the bandwidth or CPU cost.
+  (Export queue ZIP / PDF export / oversize import respectively). Users who
+  never use those features never pay the bandwidth or CPU cost.
 - @imgly/background-removal is loaded **lazily** via dynamic `import()` of
   `js/vendor/bgremove/index.mjs` (~170 KB) on the first "Remove background"
   click. That import in turn triggers a chained dynamic
@@ -57,6 +63,7 @@ sends over the network. None of the libraries below have any network traffic.
   manifest + 95.4 MB of chunked binary data).
 - `js/vendor/onnxruntime-web/` is ~400 KB.
 - `js/vendor/jszip.min.js` is ~97 KB.
+- `js/vendor/jspdf/` is ~420 KB (UMD bundle + LICENSE).
 - The total `js/vendor/` footprint is ~97 MB, dominated by the chunked
   ML model + ORT WASM kernel. A `git clone` of this repo is consequently
   larger than a typical static-site repo. The trade is: zero deploy-time

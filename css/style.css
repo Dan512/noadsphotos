@@ -640,11 +640,16 @@ main#workspace:has(> #editor-view:not([hidden])) {
   display: grid;
   place-items: center;
   background: var(--surface-2);
-  overflow: hidden;
+  /* `auto` lets the canvas overflow + scroll when the user zooms past fit.
+     Previously `hidden` + `max-width: 100%` on the canvas meant zoom-in
+     clamped the canvas to the frame, producing visible stretch artefacts
+     instead of a real bigger view. */
+  overflow: auto;
 }
 .canvas-frame canvas {
   display: block;
-  max-width: 100%; max-height: 100%;
+  /* No max-width/max-height clamp — JS sizes the canvas to image × zoom and
+     we want it to overflow the frame at high zoom so the user can pan. */
 }
 #base-canvas, #overlay-canvas {
   position: absolute;
@@ -808,6 +813,63 @@ main#workspace:has(> #editor-view:not([hidden])) {
   font-size: var(--t-sm);
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
+}
+
+/* --- Trim subsection (v1.1 Feature 3) --- */
+.editor-panel .resize-trim-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding-top: var(--space-sm);
+  margin-top: var(--space-xs);
+  border-top: 1px solid var(--border);
+}
+.editor-panel .resize-trim-group > button {
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-control);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-sm);
+  text-align: left;
+}
+.editor-panel .resize-trim-group > button:disabled {
+  opacity: 0.5;
+  cursor: progress;
+}
+.editor-panel .resize-trim-tol-row input[type="range"] {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.editor-panel .resize-trim-tol-readout {
+  font-variant-numeric: tabular-nums;
+  min-width: 2ch;
+  text-align: right;
+  color: var(--text-muted);
+}
+
+.batch-trim-hint {
+  margin: 0 0 var(--space-sm);
+  font-size: var(--t-sm);
+  color: var(--text-muted);
+}
+.batch-trim-tol-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin: var(--space-sm) 0;
+}
+.batch-trim-tol-row > input[type="range"] {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.batch-trim-tol-readout {
+  font-variant-numeric: tabular-nums;
+  min-width: 2ch;
+  text-align: right;
+  color: var(--text-muted);
 }
 
 /* --- Adjust panel (Phase 5) --- */
@@ -1336,6 +1398,47 @@ main#workspace:has(> #editor-view:not([hidden])) {
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
+/* Predicted-size readout — same monospace digit metric as the dims line so
+   they stack as a coherent pair. The value is the REAL encoded byte count
+   (not a heuristic), so it stays in a slightly stronger color to read as
+   "ground truth" rather than estimate. */
+.editor-panel .export-panel .predicted-size,
+.batch-panel .batch-predicted-size {
+  font-size: var(--t-sm);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+/* "Smallest size" preset button. Quieter than the primary Download — it's
+   a helper that adjusts settings, not the main action. */
+.editor-panel .export-panel .smallest-preset-btn,
+.batch-panel .batch-smallest-btn {
+  align-self: flex-start;
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: var(--t-xs);
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+.editor-panel .export-panel .smallest-preset-btn:hover,
+.batch-panel .batch-smallest-btn:hover {
+  background-color: var(--surface-2);
+}
+.editor-panel .export-panel .smallest-preset-btn:disabled,
+.batch-panel .batch-smallest-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.editor-panel .export-panel .smallest-preset-btn.is-working,
+.batch-panel .batch-smallest-btn.is-working {
+  /* Visual cue beyond the disabled state — Dan is colorblind, so we lean on
+     a slight italic + reduced opacity rather than only a color change. */
+  font-style: italic;
+  opacity: 0.8;
+}
 .editor-panel .export-panel .download-btn {
   margin-top: var(--space-sm);
   background: var(--accent);
@@ -1355,6 +1458,60 @@ main#workspace:has(> #editor-view:not([hidden])) {
 .editor-panel .export-panel .download-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* --- EXIF / GPS strip disclosure (v1.1) ---
+   Always-on privacy guarantee. The check glyph reads as "stripped"; the
+   text label conveys the same meaning for assistive tech and colorblind
+   users (we don't rely on green alone). The Verify button is the only
+   active control here — it inspects the last exported Blob's bytes. */
+.editor-panel .export-panel .exif-status,
+.batch-panel .exif-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-wrap: wrap;
+  margin-top: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: 1px dashed var(--border);
+  font-size: var(--t-xs);
+  color: var(--text-secondary);
+}
+.editor-panel .export-panel .exif-badge,
+.batch-panel .exif-badge {
+  /* Solid square so it's still visible without color perception. The "✓"
+     glyph carries the semantic; color is decoration. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15em;
+  height: 1.15em;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-weight: 700;
+  color: var(--accent);
+  line-height: 1;
+}
+.editor-panel .export-panel .exif-label,
+.batch-panel .exif-label {
+  cursor: help;
+}
+.editor-panel .export-panel .exif-verify-btn,
+.batch-panel .exif-verify-btn {
+  margin-left: auto;
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 2px var(--space-xs);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: var(--t-xs);
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+.editor-panel .export-panel .exif-verify-btn:hover,
+.batch-panel .exif-verify-btn:hover {
+  background-color: var(--surface-2);
 }
 
 /* --- Batch panel + thumb badge (queueView.js, Phase 10) --- */

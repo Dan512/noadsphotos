@@ -16,17 +16,28 @@ import { escapeHtml } from './escape.js';
 import { applyResize, applyRotate, applyFlip } from './ops/transforms.js';
 import { applyAdjust, applyFilterPreset, ADJUST_RANGES } from './ops/adjust.js';
 import { applyChromakey, setChromakeyMask, buildChromakeyMask, normalizeHex } from './ops/chromakey.js';
+import { computeTrimBake, applyTrimBakeToState } from './ops/trim.js';
 import {
   withBatchTransforms,
   withBatchAdjust,
   withBatchChromakey,
 } from './historyOps.js';
-import { exportBatch, exportEachIndividually } from './exporter.js';
+import { recordTransaction, pickKeys } from './history.js';
+import {
+  exportBatch,
+  exportEachIndividually,
+  exportBatchPdf,
+  pickSmallestFormat,
+  formatBytes,
+  getLastExportedBlob,
+} from './exporter.js';
+import { renderForExport } from './render/exportRenderer.js';
 import { showToast } from './errors.js';
 import { applyBgRemoveBatch } from './ops/bgremove.js';
 import { t } from './i18n.js';
 import { getSetting } from './settings.js';
 import { renderThumbnail } from './render/exportRenderer.js';
+import { hasMetadata } from './exif.js';
 
 // Track per-thumb DOM nodes and their object URLs so we can diff-render
 // without rebuilding the grid on every state change.
@@ -67,6 +78,14 @@ export function _resetThumbRefreshForTest() {
   ctxCaps = null;
   refreshInFlight = false;
   pendingRefresh = null;
+  if (batchPredictTimerId != null) {
+    clearTimeout(batchPredictTimerId);
+    batchPredictTimerId = null;
+  }
+  batchPredictRunSeq = 0;
+  lastBatchPredictKey = null;
+  lastBatchPredictBytes = null;
+  batchSmallestInFlight = false;
 }
 
 /**
@@ -377,6 +396,31 @@ const EXPORT_FORMATS = [
   { id: 'png',  i18n: 'exportFormatPng'  },
   { id: 'jpeg', i18n: 'exportFormatJpg'  },
   { id: 'webp', i18n: 'exportFormatWebp' },
+  // PDF reuses the `exportFormatPdfAria` aria label key (see editor.js).
+  { id: 'pdf',  i18n: 'exportFormatPdf'  },
+];
+
+// PDF dropdown option sets (mirrors the editor's export panel). Kept here
+// rather than imported from editor.js so the batch panel doesn't get a
+// circular import.
+const PDF_PAGE_SIZES = [
+  { id: 'fit',    i18n: 'pdfPageFit'    },
+  { id: 'letter', i18n: 'pdfPageLetter' },
+  { id: 'a4',     i18n: 'pdfPageA4'     },
+  { id: 'legal',  i18n: 'pdfPageLegal'  },
+  { id: 'a3',     i18n: 'pdfPageA3'     },
+  { id: 'b5',     i18n: 'pdfPageB5'     },
+];
+
+const PDF_ORIENTATIONS = [
+  { id: 'auto',      i18n: 'pdfOrientationAuto'      },
+  { id: 'portrait',  i18n: 'pdfOrientationPortrait'  },
+  { id: 'landscape', i18n: 'pdfOrientationLandscape' },
+];
+
+const PDF_FIT_MODES = [
+  { id: 'contain', i18n: 'pdfFitContain' },
+  { id: 'cover',   i18n: 'pdfFitCover'   },
 ];
 
 function buildBatchPanel() {
@@ -518,6 +562,59 @@ function buildBatchPanel() {
   chromaSection.body.appendChild(chromaApply);
   panel.appendChild(chromaSection.section);
 
+  // --- 4b. Trim (v1.1 Feature 3) -----------------------------------------
+  // Same two modes as the editor's Resize panel, applied to every image in
+  // the queue. The bake is destructive (commits current edits) so this is
+  // recorded as ONE transaction — Ctrl+Z restores all images at once.
+  const trimSection = buildSection(t('batchSectionTrim'), 'batch-trim-section', false);
+  const trimHint = document.createElement('p');
+  trimHint.className = 'batch-trim-hint';
+  trimHint.textContent = t('trimTooltip');
+  trimSection.body.appendChild(trimHint);
+
+  const trimTransparentBtn = document.createElement('button');
+  trimTransparentBtn.type = 'button';
+  trimTransparentBtn.className = 'batch-apply batch-trim-transparent';
+  trimTransparentBtn.textContent = t('batchTrimTransparentApply');
+  trimTransparentBtn.setAttribute('aria-label', t('batchTrimTransparentApply'));
+  trimSection.body.appendChild(trimTransparentBtn);
+
+  const trimTolRow = document.createElement('div');
+  trimTolRow.className = 'batch-row batch-trim-tol-row';
+  const trimTolLbl = document.createElement('span');
+  trimTolLbl.textContent = t('trimToleranceLabel');
+  const trimTolInput = document.createElement('input');
+  trimTolInput.type = 'range';
+  trimTolInput.min = '0';
+  trimTolInput.max = '50';
+  trimTolInput.step = '1';
+  trimTolInput.value = '8';
+  trimTolInput.className = 'batch-trim-tol';
+  trimTolInput.setAttribute('aria-label', t('trimToleranceAria'));
+  const trimTolReadout = document.createElement('span');
+  trimTolReadout.className = 'batch-trim-tol-readout';
+  trimTolReadout.textContent = '8';
+  trimTolRow.append(trimTolLbl, trimTolInput, trimTolReadout);
+  trimSection.body.appendChild(trimTolRow);
+  trimTolInput.addEventListener('input', () => {
+    trimTolReadout.textContent = trimTolInput.value;
+  });
+
+  const trimColorBtn = document.createElement('button');
+  trimColorBtn.type = 'button';
+  trimColorBtn.className = 'batch-apply batch-trim-color';
+  trimColorBtn.textContent = t('batchTrimColorApply');
+  trimColorBtn.setAttribute('aria-label', t('batchTrimColorApply'));
+  trimSection.body.appendChild(trimColorBtn);
+
+  trimTransparentBtn.addEventListener('click', () => {
+    onApplyBatchTrim('transparent', 0, [trimTransparentBtn, trimColorBtn]);
+  });
+  trimColorBtn.addEventListener('click', () => {
+    onApplyBatchTrim('color', Number(trimTolInput.value) || 0, [trimTransparentBtn, trimColorBtn]);
+  });
+  panel.appendChild(trimSection.section);
+
   // --- 5. Background remove ----------------------------------------------
   const bgSection = buildSection(t('batchSectionBg'), 'batch-bg-section', false);
   const bgHint = document.createElement('p');
@@ -548,7 +645,10 @@ function buildBatchPanel() {
     btn.dataset.format = fmt.id;
     const fmtLabel = t(fmt.i18n);
     btn.textContent = fmtLabel;
-    btn.setAttribute('aria-label', t('batchExportAsAria', { label: fmtLabel }));
+    // PDF gets a dedicated aria label (the generic "Export queue as PDF"
+    // interpolation reads fine but we prefer the canonical phrase).
+    const ariaLabel = fmt.id === 'pdf' ? t('exportFormatPdfAria') : t('batchExportAsAria', { label: fmtLabel });
+    btn.setAttribute('aria-label', ariaLabel);
     fmtRow.appendChild(btn);
     fmtBtns.set(fmt.id, btn);
     btn.addEventListener('click', () => {
@@ -556,6 +656,15 @@ function buildBatchPanel() {
     });
   }
   exportSection.body.appendChild(fmtRow);
+
+  // "Smallest size" button — picks format/quality on the FIRST queue image
+  // (assumed representative) and writes the winner to state.export.
+  const smallestBtn = document.createElement('button');
+  smallestBtn.type = 'button';
+  smallestBtn.className = 'smallest-preset-btn batch-smallest-btn';
+  smallestBtn.textContent = t('exportSmallestPreset');
+  smallestBtn.setAttribute('aria-label', t('exportSmallestPresetAria'));
+  exportSection.body.appendChild(smallestBtn);
 
   const qualityRow = document.createElement('div');
   qualityRow.className = 'batch-quality-row';
@@ -575,6 +684,87 @@ function buildBatchPanel() {
     qReadout.textContent = String(Math.round(Number(qInput.value) * 100));
     update(s => { s.export.quality = Number(qInput.value); });
   });
+
+  // PDF options block — mirrors the editor's export panel. Hidden unless
+  // PDF is the active format.
+  const pdfOptsRow = document.createElement('div');
+  pdfOptsRow.className = 'batch-pdf-opts-row pdf-opts-row';
+  pdfOptsRow.hidden = true;
+  // Page size.
+  const pdfPageSizeLabel = document.createElement('label');
+  pdfPageSizeLabel.className = 'batch-pdf-pagesize-row';
+  const pdfPageSizeSpan = document.createElement('span');
+  pdfPageSizeSpan.textContent = t('pdfPageSize');
+  pdfPageSizeLabel.appendChild(pdfPageSizeSpan);
+  const pdfPageSizeSel = document.createElement('select');
+  pdfPageSizeSel.className = 'batch-pdf-pagesize-select pdf-pagesize-select';
+  pdfPageSizeSel.setAttribute('aria-label', t('pdfPageSizeAria'));
+  for (const ps of PDF_PAGE_SIZES) {
+    const opt = document.createElement('option');
+    opt.value = ps.id;
+    opt.textContent = t(ps.i18n);
+    pdfPageSizeSel.appendChild(opt);
+  }
+  pdfPageSizeLabel.appendChild(pdfPageSizeSel);
+  pdfPageSizeSel.addEventListener('change', () => onBatchPdfOptChange('pageSize', pdfPageSizeSel.value));
+  pdfOptsRow.appendChild(pdfPageSizeLabel);
+  // Orientation.
+  const pdfOrientLabel = document.createElement('label');
+  pdfOrientLabel.className = 'batch-pdf-orientation-row';
+  const pdfOrientSpan = document.createElement('span');
+  pdfOrientSpan.textContent = t('pdfOrientation');
+  pdfOrientLabel.appendChild(pdfOrientSpan);
+  const pdfOrientSel = document.createElement('select');
+  pdfOrientSel.className = 'batch-pdf-orientation-select pdf-orientation-select';
+  pdfOrientSel.setAttribute('aria-label', t('pdfOrientationAria'));
+  for (const o of PDF_ORIENTATIONS) {
+    const opt = document.createElement('option');
+    opt.value = o.id;
+    opt.textContent = t(o.i18n);
+    pdfOrientSel.appendChild(opt);
+  }
+  pdfOrientLabel.appendChild(pdfOrientSel);
+  pdfOrientSel.addEventListener('change', () => onBatchPdfOptChange('orientation', pdfOrientSel.value));
+  pdfOptsRow.appendChild(pdfOrientLabel);
+  // Margins.
+  const pdfMarginLabel = document.createElement('label');
+  pdfMarginLabel.className = 'batch-pdf-margin-row';
+  const pdfMarginSpan = document.createElement('span');
+  pdfMarginSpan.textContent = t('pdfMargins');
+  pdfMarginLabel.appendChild(pdfMarginSpan);
+  const pdfMarginInput = document.createElement('input');
+  pdfMarginInput.type = 'number';
+  pdfMarginInput.className = 'batch-pdf-margin-input pdf-margin-input';
+  pdfMarginInput.min = '0';
+  pdfMarginInput.max = '72';
+  pdfMarginInput.step = '1';
+  pdfMarginInput.value = '0';
+  pdfMarginInput.setAttribute('aria-label', t('pdfMarginsAria'));
+  pdfMarginLabel.appendChild(pdfMarginInput);
+  pdfMarginInput.addEventListener('input', () => {
+    const v = Number(pdfMarginInput.value);
+    if (Number.isFinite(v)) onBatchPdfOptChange('margins', Math.max(0, Math.min(72, v)));
+  });
+  pdfOptsRow.appendChild(pdfMarginLabel);
+  // Fit mode.
+  const pdfFitLabel = document.createElement('label');
+  pdfFitLabel.className = 'batch-pdf-fitmode-row';
+  const pdfFitSpan = document.createElement('span');
+  pdfFitSpan.textContent = t('pdfFitMode');
+  pdfFitLabel.appendChild(pdfFitSpan);
+  const pdfFitSel = document.createElement('select');
+  pdfFitSel.className = 'batch-pdf-fitmode-select pdf-fitmode-select';
+  pdfFitSel.setAttribute('aria-label', t('pdfFitModeAria'));
+  for (const f of PDF_FIT_MODES) {
+    const opt = document.createElement('option');
+    opt.value = f.id;
+    opt.textContent = t(f.i18n);
+    pdfFitSel.appendChild(opt);
+  }
+  pdfFitLabel.appendChild(pdfFitSel);
+  pdfFitSel.addEventListener('change', () => onBatchPdfOptChange('fitMode', pdfFitSel.value));
+  pdfOptsRow.appendChild(pdfFitLabel);
+  exportSection.body.appendChild(pdfOptsRow);
 
   const fnRow = document.createElement('div');
   fnRow.className = 'batch-filename-row';
@@ -619,6 +809,42 @@ function buildBatchPanel() {
   exportEachBtn.setAttribute('aria-label', t('batchExportEachAria'));
   exportSection.body.appendChild(exportEachBtn);
 
+  // Single-PDF export: bundle all queue images into one multi-page PDF.
+  // Hidden unless PDF is the active format. Distinct from "Export queue (ZIP)"
+  // — this produces ONE shareable file rather than an archive.
+  const exportPdfBtn = document.createElement('button');
+  exportPdfBtn.type = 'button';
+  exportPdfBtn.className = 'batch-apply-secondary export-pdf-btn';
+  exportPdfBtn.textContent = t('batchExportPdf');
+  exportPdfBtn.setAttribute('aria-label', t('batchExportPdfAria'));
+  exportPdfBtn.hidden = true;
+  exportSection.body.appendChild(exportPdfBtn);
+
+  // EXIF / GPS strip disclosure (v1.1). Same UI as the per-image editor's
+  // export panel — the privacy guarantee is the same, so the disclosure
+  // should be too. Verifies the first image of the most recent batch (set
+  // inside exporter.exportBatch / exportEachIndividually).
+  const batchExifRow = document.createElement('div');
+  batchExifRow.className = 'exif-status batch-exif-status';
+  const batchExifBadge = document.createElement('span');
+  batchExifBadge.className = 'exif-badge';
+  batchExifBadge.textContent = '✓';
+  batchExifBadge.setAttribute('aria-hidden', 'true');
+  batchExifRow.appendChild(batchExifBadge);
+  const batchExifLabel = document.createElement('span');
+  batchExifLabel.className = 'exif-label';
+  batchExifLabel.textContent = t('exifStripped');
+  batchExifLabel.setAttribute('title', t('exifTooltip'));
+  batchExifRow.appendChild(batchExifLabel);
+  const batchExifVerifyBtn = document.createElement('button');
+  batchExifVerifyBtn.type = 'button';
+  batchExifVerifyBtn.className = 'exif-verify-btn batch-exif-verify-btn';
+  batchExifVerifyBtn.textContent = t('exifVerify');
+  batchExifVerifyBtn.setAttribute('aria-label', t('exifVerify'));
+  batchExifVerifyBtn.addEventListener('click', onBatchVerifyExif);
+  batchExifRow.appendChild(batchExifVerifyBtn);
+  exportSection.body.appendChild(batchExifRow);
+
   panel.appendChild(exportSection.section);
 
   // --- Wire actions ------------------------------------------------------
@@ -651,18 +877,35 @@ function buildBatchPanel() {
     // finally.
     exportBtn.disabled = true;
     exportEachBtn.disabled = true;
+    exportPdfBtn.disabled = true;
     exportBatch().finally(() => {
       exportBtn.disabled = false;
       exportEachBtn.disabled = false;
+      exportPdfBtn.disabled = false;
     });
   });
   exportEachBtn.addEventListener('click', () => {
     exportBtn.disabled = true;
     exportEachBtn.disabled = true;
+    exportPdfBtn.disabled = true;
     exportEachIndividually().finally(() => {
       exportBtn.disabled = false;
       exportEachBtn.disabled = false;
+      exportPdfBtn.disabled = false;
     });
+  });
+  exportPdfBtn.addEventListener('click', () => {
+    exportBtn.disabled = true;
+    exportEachBtn.disabled = true;
+    exportPdfBtn.disabled = true;
+    exportBatchPdf().finally(() => {
+      exportBtn.disabled = false;
+      exportEachBtn.disabled = false;
+      exportPdfBtn.disabled = false;
+    });
+  });
+  smallestBtn.addEventListener('click', () => {
+    onBatchSmallestPreset(smallestBtn);
   });
 
   panelRefs = {
@@ -671,7 +914,9 @@ function buildBatchPanel() {
     sliderRefs, presetSel, adjustApply,
     chromaColor, chromaTol, chromaTolReadout, chromaApply,
     bgBtn,
-    fmtBtns, qInput, qReadout, qualityRow, fnInput, exportBtn, readout,
+    fmtBtns, qInput, qReadout, qualityRow, fnInput, exportBtn, exportEachBtn, exportPdfBtn,
+    smallestBtn, readout,
+    pdfOptsRow, pdfPageSizeSel, pdfOrientSel, pdfMarginInput, pdfFitSel, pdfFitLabel,
   };
 
   if (!panelSubscribed) {
@@ -734,6 +979,8 @@ function capitalize(s) {
 function syncBatchPanel(state) {
   if (!panelRefs) return;
   const exp = state.export || { format: 'png', quality: 0.92, filenameTemplate: '{base}-edited' };
+  const pdfOpts = exp.pdf || { pageSize: 'fit', orientation: 'auto', margins: undefined, fitMode: 'contain' };
+  const isPdf = exp.format === 'pdf';
 
   // Active format chip.
   for (const [id, btn] of panelRefs.fmtBtns) {
@@ -741,7 +988,8 @@ function syncBatchPanel(state) {
     btn.setAttribute('aria-pressed', id === exp.format ? 'true' : 'false');
   }
 
-  // Quality row visibility — only meaningful for JPG / WebP.
+  // Quality row visibility — only meaningful for JPG / WebP. PDF uses a
+  // fixed embed quality (0.92), so the slider is irrelevant.
   const showQuality = exp.format === 'jpeg' || exp.format === 'webp';
   panelRefs.qualityRow.hidden = !showQuality;
   if (showQuality && document.activeElement !== panelRefs.qInput) {
@@ -750,11 +998,43 @@ function syncBatchPanel(state) {
     panelRefs.qReadout.textContent = String(Math.round(q * 100));
   }
 
+  // PDF options + Export PDF button are visible only when PDF is the active
+  // format. The ZIP and "each separately" buttons stay visible (they're
+  // meaningless for PDF but we hide them too — see below — to keep the
+  // primary action obvious).
+  if (panelRefs.pdfOptsRow) panelRefs.pdfOptsRow.hidden = !isPdf;
+  if (panelRefs.exportPdfBtn) panelRefs.exportPdfBtn.hidden = !isPdf;
+  if (panelRefs.exportBtn) panelRefs.exportBtn.hidden = isPdf;
+  if (panelRefs.exportEachBtn) panelRefs.exportEachBtn.hidden = isPdf;
+  if (panelRefs.smallestBtn) panelRefs.smallestBtn.hidden = isPdf;
+  if (panelRefs.pdfPageSizeSel && document.activeElement !== panelRefs.pdfPageSizeSel) {
+    panelRefs.pdfPageSizeSel.value = pdfOpts.pageSize || 'fit';
+  }
+  if (panelRefs.pdfOrientSel && document.activeElement !== panelRefs.pdfOrientSel) {
+    panelRefs.pdfOrientSel.value = pdfOpts.orientation || 'auto';
+  }
+  if (panelRefs.pdfMarginInput && document.activeElement !== panelRefs.pdfMarginInput) {
+    const defaultMargin = (pdfOpts.pageSize === 'fit' || !pdfOpts.pageSize) ? 0 : 36;
+    const m = Number.isFinite(pdfOpts.margins) ? pdfOpts.margins : defaultMargin;
+    panelRefs.pdfMarginInput.value = String(m);
+  }
+  if (panelRefs.pdfFitSel && document.activeElement !== panelRefs.pdfFitSel) {
+    panelRefs.pdfFitSel.value = pdfOpts.fitMode || 'contain';
+  }
+  if (panelRefs.pdfFitLabel) {
+    const fitRelevant = (pdfOpts.pageSize && pdfOpts.pageSize !== 'fit');
+    panelRefs.pdfFitLabel.hidden = !fitRelevant;
+  }
+
   if (document.activeElement !== panelRefs.fnInput) {
     panelRefs.fnInput.value = exp.filenameTemplate || '{base}-edited';
   }
 
-  // File count + estimated total size.
+  // File count + estimated total size. Two-tier readout:
+  //   (a) cheap pixel-based heuristic for the initial value and as the
+  //       fallback shown while a real predict encode is in flight;
+  //   (b) real predict encode of the FIRST image, scaled by queue length
+  //       and a small fudge factor — updates the readout when ready.
   const count = state.queue.length;
   let totalPx = 0;
   for (const id of state.queue) {
@@ -763,10 +1043,193 @@ function syncBatchPanel(state) {
     totalPx += (img.source.width || 0) * (img.source.height || 0);
   }
   const bytesPerPx = exp.format === 'png' ? 4 : exp.format === 'webp' ? 1 : 2;
-  const estMB = (totalPx * bytesPerPx) / (1024 * 1024);
-  const key = count === 1 ? 'batchReadoutSingular' : 'batchReadoutPlural';
-  panelRefs.readout.textContent = t(key, { count, mb: estMB.toFixed(1) });
+  const estBytes = totalPx * bytesPerPx;
+  const fallbackKey = count === 1 ? 'batchReadoutSingular' : 'batchReadoutPlural';
+  const fallbackText = t(fallbackKey, { count, mb: (estBytes / (1024 * 1024)).toFixed(1) });
+
+  if (isPdf) {
+    // For PDF, skip the predict-encode pass — the result depends on jsPDF
+    // container overhead and per-page bake size, which we'd need to actually
+    // build to measure. Show a stable "approximate" note instead; the toast
+    // after the real export shows the actual size.
+    panelRefs.readout.textContent = t('exportPredictedPdfNote');
+  } else {
+    // If we have a cached predict result for this key, show it; otherwise
+    // show the heuristic and schedule a real predict encode.
+    const firstId = state.queue[0];
+    const firstImg = firstId ? state.images[firstId] : null;
+    if (firstImg) {
+      const sig = batchStateSignature(firstImg);
+      const key = `batch::${firstId}::${exp.format}::${exp.quality}::${count}::${sig}`;
+      if (key === lastBatchPredictKey && lastBatchPredictBytes != null) {
+        panelRefs.readout.textContent = t('exportPredictedSizeBatch', {
+          count,
+          size: formatBytes(lastBatchPredictBytes),
+        });
+      } else {
+        panelRefs.readout.textContent = fallbackText;
+        scheduleBatchPredictEncode(key, firstImg, exp.format, exp.quality, count);
+      }
+    } else {
+      panelRefs.readout.textContent = fallbackText;
+    }
+  }
   panelRefs.exportBtn.disabled = count === 0;
+  if (panelRefs.exportPdfBtn) panelRefs.exportPdfBtn.disabled = count === 0;
+  if (panelRefs.smallestBtn) panelRefs.smallestBtn.disabled = count === 0 || batchSmallestInFlight;
+}
+
+function onBatchPdfOptChange(key, value) {
+  update(s => {
+    if (!s.export.pdf) s.export.pdf = { pageSize: 'fit', orientation: 'auto', margins: undefined, fitMode: 'contain' };
+    s.export.pdf[key] = value;
+  });
+}
+
+// --- batch predict encode + smallest -------------------------------------
+//
+// Mirrors editor.js's debounced predict-encode pattern, scoped to the FIRST
+// queue image. The result's byte count is scaled by queue length × a small
+// fudge factor (1.0 by default — we already do per-image encodes; the
+// scaled value is "estimate per image × N"). For mixed-content queues this
+// will be wrong, but it's clearly labeled "est."
+
+let batchPredictTimerId = null;
+let batchPredictRunSeq = 0;
+let lastBatchPredictKey = null;
+let lastBatchPredictBytes = null;
+let batchSmallestInFlight = false;
+const BATCH_PREDICT_DEBOUNCE_MS = 300;
+
+function scheduleBatchPredictEncode(key, firstImg, format, quality, count) {
+  if (batchPredictTimerId != null) clearTimeout(batchPredictTimerId);
+  batchPredictTimerId = setTimeout(() => {
+    batchPredictTimerId = null;
+    runBatchPredictEncode(key, firstImg, format, quality, count);
+  }, BATCH_PREDICT_DEBOUNCE_MS);
+}
+
+async function runBatchPredictEncode(key, firstImg, format, quality, count) {
+  if (!ctxLifecycle || !ctxCaps) return;
+  const mySeq = ++batchPredictRunSeq;
+  let blob;
+  try {
+    blob = await renderForExport(firstImg, { format, quality }, ctxCaps, ctxLifecycle);
+  } catch (err) {
+    // Predict encodes are background work — don't toast. Just keep the
+    // heuristic readout visible.
+    return;
+  }
+  if (mySeq !== batchPredictRunSeq) return; // stale
+  // Scale by queue length. For ZIP STORE compression the per-image bytes
+  // are roughly additive (images don't recompress well); for individual
+  // downloads it's exact-per-image.
+  const projected = blob.size * Math.max(1, count);
+  lastBatchPredictKey = key;
+  lastBatchPredictBytes = projected;
+  if (panelRefs && panelRefs.readout) {
+    panelRefs.readout.textContent = t('exportPredictedSizeBatch', {
+      count,
+      size: formatBytes(projected),
+    });
+  }
+}
+
+async function onBatchSmallestPreset(btn) {
+  if (!ctxLifecycle || !ctxCaps) return;
+  const s = getState();
+  const firstId = s.queue[0];
+  const firstImg = firstId ? s.images[firstId] : null;
+  if (!firstImg) return;
+  if (batchSmallestInFlight) return;
+  batchSmallestInFlight = true;
+  const origLabel = btn ? btn.textContent : null;
+  if (btn) {
+    btn.disabled = true;
+    btn.classList.add('is-working');
+    btn.textContent = t('exportSmallestWorking');
+  }
+  try {
+    const result = await pickSmallestFormat(firstImg, ctxCaps, ctxLifecycle);
+    update(state => {
+      state.export.format = result.format;
+      state.export.quality = result.quality;
+    });
+    if (result.format === 'png') {
+      showToast(t('exportSmallestNoSavings'), { variant: 'info' });
+    } else {
+      showToast(t('exportSmallestToastBatch', {
+        format: formatLabelBatch(result.format),
+        quality: Math.round((result.quality || 0) * 100),
+      }), { variant: 'info' });
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('onBatchSmallestPreset:', err);
+    showToast(t('exportGenericFailed'), { variant: 'error' });
+  } finally {
+    batchSmallestInFlight = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.classList.remove('is-working');
+      btn.textContent = origLabel || t('exportSmallestPreset');
+    }
+  }
+}
+
+function formatLabelBatch(fmt) {
+  if (fmt === 'jpeg') return 'JPG';
+  if (fmt === 'webp') return 'WebP';
+  if (fmt === 'png')  return 'PNG';
+  return String(fmt).toUpperCase();
+}
+
+// Inspect the most recently exported per-image Blob (the first successful
+// image from exportBatch, or the latest from exportEachIndividually) for
+// leaked metadata. Surfaces a toast either confirming the strip or listing
+// the tags found — see the editor's onVerifyExif for the symmetric path.
+async function onBatchVerifyExif() {
+  const last = getLastExportedBlob();
+  if (!last || !last.blob) {
+    showToast(t('exifVerifyNoExport'), { variant: 'info' });
+    return;
+  }
+  let result;
+  try {
+    result = await hasMetadata(last.blob);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('onBatchVerifyExif:', err);
+    showToast(t('exportGenericFailed'), { variant: 'error' });
+    return;
+  }
+  if (!result.exif && !result.xmp && !result.gps) {
+    showToast(t('exifVerifyClean'), { variant: 'info' });
+    return;
+  }
+  const tagsList = (result.tags && result.tags.length)
+    ? result.tags.join(', ')
+    : 'unknown';
+  showToast(t('exifVerifyFound', { tags: tagsList }), { variant: 'warn' });
+}
+
+function batchStateSignature(img) {
+  if (!img) return '';
+  const parts = [
+    safeStr(img.transforms),
+    safeStr(img.adjust),
+    String(img.filterPreset || 'none'),
+    img.chromakeyMask ? `cm:${img.chromakeyMask.length}` : 'cm:0',
+    img.bgMask ? `bm:${img.bgMask.length}` : 'bm:0',
+    safeStr(img.chromakey),
+    safeStr(img.overlays),
+  ];
+  return parts.join('|');
+}
+
+function safeStr(v) {
+  if (v == null) return '';
+  try { return JSON.stringify(v); } catch { return ''; }
 }
 
 // --------------------------------------------------------------------------
@@ -902,6 +1365,94 @@ async function onApplyChromakey(hexInput, tolerance) {
   });
   toast(t('batchToastChromakey', { count: ids.length }));
   maybeRefreshThumbs(ids);
+}
+
+// Trim every queue image. Each image is baked individually (its own
+// renderForExport call) so an empty trim on one image doesn't poison the
+// whole batch. We record ONE transaction across all images that actually
+// changed; nothing-changed images are skipped.
+async function onApplyBatchTrim(mode, tolerance, lockButtons) {
+  const ctx = { lifecycle: ctxLifecycle, caps: ctxCaps };
+  if (!ctx.lifecycle || !ctx.caps) {
+    showToast(t('toastBootFailed'), { variant: 'error' });
+    return;
+  }
+
+  const ids = getState().queue.slice();
+  if (ids.length === 0) return;
+
+  // Disable both trim buttons while we bake. Toast progress on completion.
+  const prev = lockButtons.map(b => b.disabled);
+  for (const b of lockButtons) b.disabled = true;
+
+  const KEYS = ['source', 'transforms', 'adjust', 'filterPreset', 'chromakey', 'chromakeyMask', 'bgRemoved', 'bgMask'];
+
+  const beforeByImage = Object.create(null);
+  const bakeByImage = Object.create(null);
+  let trimmedCount = 0;
+  let skippedCount = 0;
+
+  try {
+    for (const id of ids) {
+      const img = getState().images[id];
+      if (!img) { skippedCount++; continue; }
+      try {
+        const bake = await computeTrimBake({
+          imageState: img,
+          caps: ctx.caps,
+          lifecycle: ctx.lifecycle,
+          renderForExport,
+          mode,
+          tolerance,
+        });
+        if (!bake) { skippedCount++; continue; }
+        beforeByImage[id] = pickKeys(img, KEYS);
+        bakeByImage[id] = bake;
+        trimmedCount++;
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn('batch trim: failed for', id, err);
+        skippedCount++;
+      }
+    }
+
+    const affectedIds = Object.keys(bakeByImage);
+    if (affectedIds.length === 0) {
+      showToast(t('batchToastTrimSkipped', { count: skippedCount }), { variant: 'warn' });
+      return;
+    }
+
+    // Apply all bakes in a single update so subscribers fire once.
+    update(s => {
+      for (const id of affectedIds) {
+        const target = s.images[id];
+        if (!target) continue;
+        applyTrimBakeToState(target, bakeByImage[id]);
+        markBatch(target);
+      }
+    });
+
+    // Record as one transaction. opKind 'transforms' → renderer reinvalidates
+    // base on undo. The bake replaces `source` too, which the renderer
+    // re-reads anyway when baseDirty is set.
+    const afterByImage = Object.create(null);
+    for (const id of affectedIds) {
+      const img = getState().images[id];
+      if (img) afterByImage[id] = pickKeys(img, KEYS);
+    }
+    recordTransaction({
+      label: mode === 'transparent' ? 'Trim transparent edges (all)' : 'Trim background color (all)',
+      affectedImageIds: affectedIds,
+      beforeByImage,
+      afterByImage,
+      opKind: 'transforms',
+    });
+
+    toast(t('batchToastTrimmed', { count: trimmedCount }));
+    maybeRefreshThumbs(affectedIds);
+  } finally {
+    for (let i = 0; i < lockButtons.length; i++) lockButtons[i].disabled = prev[i];
+  }
 }
 
 async function onApplyBgRemove() {

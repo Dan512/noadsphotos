@@ -19,6 +19,7 @@
 // because iOS Safari sometimes needs the URL alive for a moment after the
 // click to actually start the download.
 import { renderForExport } from './render/exportRenderer.js';
+import { renderForPdf, renderForPdfBatch } from './render/pdfRenderer.js';
 import { showToast } from './errors.js';
 import { getState } from './state.js';
 import { EncodeError } from './codec.js';
@@ -26,11 +27,188 @@ import { escapeHtml } from './escape.js';
 import { loadJSZip } from './vendor/jszip-loader.js';
 import { t } from './i18n.js';
 
+/**
+ * Pretty-print a byte count. Used by the predicted-size readout, success
+ * toasts, and the "Smallest size" comparison output.
+ *
+ *   1023        → '1023 B'
+ *   1024..      → 'N KB'  (rounded to integer KB)
+ *   1024*1024.. → 'N.M MB' (one decimal place)
+ *
+ * @param {number} n
+ * @returns {string}
+ */
+export function formatBytes(n) {
+  if (!Number.isFinite(n) || n < 0) return '0 B';
+  if (n < 1024) return `${Math.round(n)} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * Heuristically detect whether an image has, or will have, transparent
+ * pixels in its exported output. We use a STATE-based check rather than
+ * sampling the rendered canvas:
+ *   - source PNG (which often carries alpha)
+ *   - a chromakey was applied (silhouettes the picked color out)
+ *   - a bgMask is present (background removed)
+ *   - a redact overlay uses 'blur' (blur leaves edges semi-transparent
+ *     in v1; pixelate stays opaque)
+ *
+ * False positives are fine (we just don't pick JPG when we could have);
+ * false negatives risk silently picking JPG and ditching alpha. The
+ * source-PNG check is the conservative default.
+ *
+ * @param {object} imageState
+ * @returns {boolean}
+ */
+export function hasTransparency(imageState) {
+  if (!imageState) return false;
+  if (imageState.bgMask) return true;
+  if (imageState.chromakeyMask) return true;
+  const ck = imageState.chromakey;
+  if (ck && (ck.hex || (typeof ck.tolerance === 'number' && ck.tolerance > 0))) return true;
+  // Source PNG is the common "has alpha" case. We don't decode pixels here —
+  // the source MIME is recorded at import time as `source.type`.
+  const mime = imageState.source && (imageState.source.type || imageState.source.mime);
+  if (mime === 'image/png') return true;
+  return false;
+}
+
+/**
+ * Format-comparison candidates for the "Smallest size" preset. Quality is
+ * irrelevant for PNG (lossless); other formats sweep a small ladder so we
+ * find the knee of the size/quality curve without running 50 encodes.
+ *
+ * The order matters only for ties: earlier entries win, so PNG-vs-other ties
+ * go to the lossless format.
+ */
+const SMALLEST_CANDIDATES = Object.freeze([
+  { format: 'png',  quality: 1.0,  alpha: true  },
+  { format: 'webp', quality: 0.95, alpha: true  },
+  { format: 'webp', quality: 0.85, alpha: true  },
+  { format: 'webp', quality: 0.75, alpha: true  },
+  { format: 'webp', quality: 0.65, alpha: true  },
+  { format: 'jpeg', quality: 0.95, alpha: false },
+  { format: 'jpeg', quality: 0.85, alpha: false },
+  { format: 'jpeg', quality: 0.75, alpha: false },
+  { format: 'jpeg', quality: 0.65, alpha: false },
+]);
+
+/**
+ * Run the renderForExport pipeline once per candidate format/quality, return
+ * the smallest blob along with its winning settings. PNG is the reference
+ * size for the "% smaller than PNG" toast caller, so we always evaluate it
+ * first and remember its size.
+ *
+ * If the image has transparency (per `hasTransparency`), JPEG candidates are
+ * excluded so we never silently drop the alpha channel.
+ *
+ * Browsers without WebP encoding (per `caps.webp`) skip WebP candidates —
+ * the codec would throw EncodeError otherwise.
+ *
+ * @param {object} imageState
+ * @param {object} caps
+ * @param {object} lifecycle
+ * @returns {Promise<{format: string, quality: number, blob: Blob, pngSize: number|null, candidates: Array}>}
+ */
+export async function pickSmallestFormat(imageState, caps, lifecycle) {
+  if (!imageState || !lifecycle) throw new Error('pickSmallestFormat: missing args');
+  const supportsWebp = !!(caps && caps.webp);
+  const wantsAlpha = hasTransparency(imageState);
+  let best = null;
+  let pngSize = null;
+  const tried = [];
+
+  for (const cand of SMALLEST_CANDIDATES) {
+    if (cand.format === 'webp' && !supportsWebp) continue;
+    if (wantsAlpha && !cand.alpha) continue;
+    let blob;
+    try {
+      blob = await renderForExport(imageState, { format: cand.format, quality: cand.quality }, caps, lifecycle);
+    } catch (err) {
+      // Skip on any per-candidate failure — codec.js may reject when WebP
+      // appears supported but encoding fails for this particular surface.
+      // eslint-disable-next-line no-console
+      console.warn('pickSmallestFormat: candidate failed', cand, err && err.message);
+      continue;
+    }
+    tried.push({ ...cand, size: blob.size });
+    if (cand.format === 'png') pngSize = blob.size;
+    if (!best || blob.size < best.blob.size) {
+      best = { format: cand.format, quality: cand.quality, blob };
+    }
+  }
+
+  if (!best) throw new Error('pickSmallestFormat: no candidates succeeded');
+  return { ...best, pngSize, candidates: tried };
+}
+
 // Module-scope context populated by setExportContext (called from main.js after
 // lifecycle + caps are ready). Without this, the panel's Download button has
 // nothing to plumb through.
 let ctxLifecycle = null;
 let ctxCaps = null;
+
+// Predict-encode cache. The panel's "Predicted size" readout calls
+// renderForExport at the current settings; we keep the resulting Blob on
+// hand so a subsequent Download click can reuse it without a second encode.
+// Keyed by {imageId, format, quality, stateHash} so it invalidates on any
+// edit that affects the output bytes.
+let predictCache = null; // { key: string, blob: Blob }
+
+// Last successfully exported Blob — used by the "Verify last export" button
+// in the Export panel to inspect for leaked metadata. Cleared on
+// _resetForTest. We store BOTH the blob and the filename so the verify UI
+// can mention what was inspected.
+let lastExportedBlob = null;     // Blob | null
+let lastExportedFilename = null; // string | null
+
+function makePredictKey(imageId, format, quality, stateSignature) {
+  return `${imageId}::${format}::${quality}::${stateSignature}`;
+}
+
+/**
+ * Record the latest predict-encode result so a follow-up Download click can
+ * reuse the bytes. Caller is responsible for keying — we just store last.
+ */
+export function setPredictCache(key, blob) {
+  predictCache = (key && blob) ? { key, blob } : null;
+}
+
+/**
+ * Read the cached predict blob iff its key matches. Returns null on miss.
+ */
+export function getPredictCache(key) {
+  if (!predictCache || predictCache.key !== key) return null;
+  return predictCache.blob;
+}
+
+export function clearPredictCache() {
+  predictCache = null;
+}
+
+/**
+ * Return the last successfully exported Blob (single or batch first image) so
+ * the Export panel's "Verify last export" button can inspect its bytes for
+ * leaked EXIF/XMP/GPS metadata. Null if nothing has been exported this
+ * session.
+ *
+ * @returns {{ blob: Blob, filename: string } | null}
+ */
+export function getLastExportedBlob() {
+  if (!lastExportedBlob) return null;
+  return { blob: lastExportedBlob, filename: lastExportedFilename || '' };
+}
+
+/**
+ * Internal helper — records the last exported blob. Exported for tests that
+ * want to seed it directly.
+ */
+export function _setLastExported(blob, filename) {
+  lastExportedBlob = blob || null;
+  lastExportedFilename = filename || null;
+}
 
 /**
  * Provide lifecycle + caps refs so the export panel's Download button can
@@ -50,11 +228,24 @@ export function getExportContext() {
  * button — it reads format/quality/filenameTemplate from state.export.
  *
  * @param {string} imageId
- * @param {object} [lifecycle] - falls back to module ctx
- * @param {object} [caps]      - falls back to module ctx
+ * @param {object} [lifecycleOrOpts] - lifecycle, OR an opts object {lifecycle?, caps?, predictKey?}
+ * @param {object} [caps]            - falls back to module ctx
  * @returns {Promise<Blob|null>} the exported blob, or null on failure (toasts shown).
  */
-export async function exportSingle(imageId, lifecycle = ctxLifecycle, caps = ctxCaps) {
+export async function exportSingle(imageId, lifecycleOrOpts = ctxLifecycle, caps = ctxCaps) {
+  // Backwards-compat: legacy callers pass (id, lifecycle, caps). New callers
+  // can pass (id, { lifecycle, caps, predictKey }) to take advantage of the
+  // predict-encode cache.
+  let lifecycle, opts;
+  if (lifecycleOrOpts && typeof lifecycleOrOpts === 'object' && (
+      'lifecycle' in lifecycleOrOpts || 'caps' in lifecycleOrOpts || 'predictKey' in lifecycleOrOpts)) {
+    opts = lifecycleOrOpts;
+    lifecycle = opts.lifecycle || ctxLifecycle;
+    caps = opts.caps || caps || ctxCaps;
+  } else {
+    lifecycle = lifecycleOrOpts || ctxLifecycle;
+    opts = null;
+  }
   const s = getState();
   const img = s.images[imageId];
   if (!img) {
@@ -72,12 +263,21 @@ export async function exportSingle(imageId, lifecycle = ctxLifecycle, caps = ctx
   // by closing the tab if the warning is a dealbreaker.
   warnIfNeeded(img, caps);
 
-  let blob;
-  try {
-    blob = await renderForExport(img, { format, quality }, caps, lifecycle);
-  } catch (err) {
-    handleExportError(err);
-    return null;
+  // Reuse the predict-encode blob if the panel pre-computed one for the
+  // current settings + state. The opts.predictKey passed in by the caller
+  // should match what the panel registered via setPredictCache.
+  let blob = null;
+  if (opts && opts.predictKey) {
+    const cached = getPredictCache(opts.predictKey);
+    if (cached) blob = cached;
+  }
+  if (!blob) {
+    try {
+      blob = await renderForExport(img, { format, quality }, caps, lifecycle);
+    } catch (err) {
+      handleExportError(err);
+      return null;
+    }
   }
 
   const filename = makeFilename(img, format, filenameTemplate);
@@ -89,7 +289,15 @@ export async function exportSingle(imageId, lifecycle = ctxLifecycle, caps = ctx
     showToast(t('exportDownloadFailedSingle'), { variant: 'error' });
     return blob;
   }
-  showToast(t('exportSuccess', { filename }), { variant: 'info' });
+  // Remember the blob so the panel's "Verify last export" button can inspect
+  // it for leaked EXIF/XMP/GPS metadata — the privacy guarantee we surface
+  // to users.
+  lastExportedBlob = blob;
+  lastExportedFilename = filename;
+  // Include the actual file size in the success toast so users see what
+  // compression they got — the headline feature for "compress image online"
+  // visitors.
+  showToast(t('exportSuccessWithSize', { filename, size: formatBytes(blob.size) }), { variant: 'info' });
   return blob;
 }
 
@@ -153,6 +361,8 @@ export async function exportBatch(opts = {}) {
   let failed = 0;
   let successCount = 0;
   const usedNames = new Set();
+  let firstBatchBlob = null;
+  let firstBatchName = null;
 
   for (let i = 0; i < ids.length; i++) {
     if (cancelled) break;
@@ -172,6 +382,11 @@ export async function exportBatch(opts = {}) {
       usedNames.add(name);
       zip.file(name, blob);
       successCount += 1;
+      if (firstBatchBlob === null) {
+        // First successful image in the batch — record for "Verify last export".
+        firstBatchBlob = blob;
+        firstBatchName = name;
+      }
       progress.itemUpdate(i, 'done', name);
     } catch (err) {
       failed += 1;
@@ -232,11 +447,23 @@ export async function exportBatch(opts = {}) {
     showToast(t('exportZipDownloadFailed'), { variant: 'error' });
   }
 
+  // Surface the first per-image blob (NOT the ZIP) as the "last export" so
+  // the verify-metadata UI inspects a representative image, not the ZIP
+  // container itself. The ZIP would always look "clean" but tell us nothing
+  // about whether the individual images leaked metadata.
+  if (firstBatchBlob) {
+    lastExportedBlob = firstBatchBlob;
+    lastExportedFilename = firstBatchName;
+  }
+
   progress.close();
   if (failed > 0) {
     showToast(t('exportBatchPartial', { count: successCount, failed }), { variant: 'warn' });
   } else {
-    showToast(t('exportBatchDone', { count: successCount }), { variant: 'info' });
+    showToast(
+      t('exportBatchDoneWithSize', { count: successCount, size: formatBytes(zipBlob.size) }),
+      { variant: 'info' },
+    );
   }
   return { count: successCount, failed, cancelled: false };
 }
@@ -288,6 +515,7 @@ export async function exportEachIndividually(opts = {}) {
 
   let failed = 0;
   let successCount = 0;
+  let totalBytes = 0;
   const usedNames = new Set();
 
   for (let i = 0; i < ids.length; i++) {
@@ -308,6 +536,12 @@ export async function exportEachIndividually(opts = {}) {
       usedNames.add(name);
       triggerDownload(blob, name);
       successCount += 1;
+      totalBytes += blob.size;
+      // Record the LAST successful blob — for "Each individually" the latest
+      // download is the closest match to "what the user just saw" if they
+      // want to verify metadata stripping.
+      lastExportedBlob = blob;
+      lastExportedFilename = name;
       progress.itemUpdate(i, 'done', name);
     } catch (err) {
       failed += 1;
@@ -341,9 +575,163 @@ export async function exportEachIndividually(opts = {}) {
   if (failed > 0) {
     showToast(t('exportBatchPartial', { count: successCount, failed }), { variant: 'warn' });
   } else {
-    showToast(t('exportBatchDone', { count: successCount }), { variant: 'info' });
+    showToast(
+      t('exportBatchEachDoneWithSize', { count: successCount, size: formatBytes(totalBytes) }),
+      { variant: 'info' },
+    );
   }
   return { count: successCount, failed, cancelled: false };
+}
+
+/**
+ * Export a single image as a one-page PDF. Mirrors `exportSingle` in shape
+ * (lifecycle/caps lookup, progress + toast UX, filename templating, last-
+ * exported tracking) but routes through the PDF renderer instead of the
+ * raw format encoder. The "PDF" extension is appended to the templated
+ * filename so {base}-edited becomes {base}-edited.pdf.
+ *
+ * @param {string} imageId
+ * @param {object} [opts] - { lifecycle?, caps?, pdf?: <renderer opts> }
+ * @returns {Promise<Blob|null>} the exported PDF blob, or null on failure.
+ */
+export async function exportSinglePdf(imageId, opts = {}) {
+  const lifecycle = opts.lifecycle || ctxLifecycle;
+  const caps = opts.caps || ctxCaps;
+  const s = getState();
+  const img = s.images[imageId];
+  if (!img) {
+    showToast(t('exportNoImage'), { variant: 'warn' });
+    return null;
+  }
+  if (!lifecycle || !caps) {
+    showToast(t('exportNotReady'), { variant: 'error' });
+    return null;
+  }
+  warnIfNeeded(img, caps);
+
+  const pdfOpts = opts.pdf || (s.export && s.export.pdf) || {};
+
+  let blob;
+  try {
+    blob = await renderForPdf(img, pdfOpts, caps, lifecycle);
+  } catch (err) {
+    handleExportError(err);
+    return null;
+  }
+
+  const filenameTemplate = (s.export && s.export.filenameTemplate) || '{base}-edited';
+  const filename = makeFilename(img, 'pdf', filenameTemplate);
+  try {
+    triggerDownload(blob, filename);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('exportSinglePdf: download trigger failed', err);
+    showToast(t('exportDownloadFailedSingle'), { variant: 'error' });
+    return blob;
+  }
+  lastExportedBlob = blob;
+  lastExportedFilename = filename;
+  showToast(
+    t('pdfExportSuccess', { filename, size: formatBytes(blob.size) }),
+    { variant: 'info' },
+  );
+  return blob;
+}
+
+/**
+ * Export the entire queue as a single multi-page PDF — one page per image,
+ * in queue order, applying the page-size/orientation/margins/fitMode
+ * options consistently across pages. This is the v1.1 differentiator vs
+ * the "Export queue (ZIP)" path: a single shareable PDF file rather than
+ * an archive of individual images.
+ *
+ * @param {object} [opts]
+ * @returns {Promise<{ count: number, failed: number, cancelled: boolean } | null>}
+ */
+export async function exportBatchPdf(opts = {}) {
+  const lifecycle = opts.lifecycle || ctxLifecycle;
+  const caps = opts.caps || ctxCaps;
+  if (!lifecycle || !caps) {
+    showToast(t('exportNotReady'), { variant: 'error' });
+    return null;
+  }
+
+  const s = getState();
+  const ids = [...s.queue];
+  if (ids.length === 0) {
+    showToast(t('exportQueueEmpty'), { variant: 'warn' });
+    return null;
+  }
+
+  const pdfOpts = opts.pdf || (s.export && s.export.pdf) || {};
+
+  // Reuse the per-image progress modal — the encoding work is identical
+  // (per-image renderForExport + PDF placement); only the container differs.
+  const progress = openBatchProgressModal(ids, s.images);
+  let cancelled = false;
+  progress.onCancel(() => { cancelled = true; });
+
+  let result;
+  try {
+    result = await renderForPdfBatch(ids, pdfOpts, caps, lifecycle, {
+      onProgress: ({ index, total, state, detail }) => {
+        progress.itemUpdate(index, state, detail);
+        progress.tick(index + 1, total);
+      },
+      onCancel: () => cancelled,
+      getImage: (id) => (getState().images || {})[id] || null,
+      evictAfterUse: (id) => {
+        if (id !== getState().ui.activeImageId && lifecycle && typeof lifecycle.evictAfterUse === 'function') {
+          try { lifecycle.evictAfterUse(id); } catch { /* ignore */ }
+        }
+      },
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('exportBatchPdf: render failed', err);
+    progress.close();
+    showToast(t('exportGenericFailed'), { variant: 'error' });
+    return null;
+  }
+
+  if (result.cancelled) {
+    progress.close();
+    showToast(t('exportCancelled'), { variant: 'warn' });
+    return { count: result.count, failed: result.failed, cancelled: true };
+  }
+  if (result.count === 0 || !result.blob) {
+    progress.close();
+    showToast(t('exportNothingSucceeded'), { variant: 'error' });
+    return { count: 0, failed: result.failed, cancelled: false };
+  }
+
+  progress.setBuilding();
+
+  // Generate the download filename. We don't apply the per-image template
+  // here — there's only one output file. Use a queue-level name with date
+  // + timestamp so a repeated export from the same session doesn't collide.
+  const pdfName = `noadsphotos-${formatDate(new Date())}-${Date.now()}.pdf`;
+  try {
+    triggerDownload(result.blob, pdfName);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('exportBatchPdf: download trigger failed', err);
+    showToast(t('exportZipDownloadFailed'), { variant: 'error' });
+  }
+
+  lastExportedBlob = result.blob;
+  lastExportedFilename = pdfName;
+
+  progress.close();
+  if (result.failed > 0) {
+    showToast(t('exportBatchPartial', { count: result.count, failed: result.failed }), { variant: 'warn' });
+  } else {
+    showToast(
+      t('pdfBatchSuccess', { count: result.count, size: formatBytes(result.blob.size) }),
+      { variant: 'info' },
+    );
+  }
+  return { count: result.count, failed: result.failed, cancelled: false };
 }
 
 // --- helpers ---------------------------------------------------------------
@@ -453,6 +841,7 @@ function uniquifyName(name, used) {
 function extensionFor(format) {
   const f = String(format || 'png').toLowerCase().replace(/^image\//, '');
   if (f === 'jpeg' || f === 'jpg') return 'jpg';
+  if (f === 'pdf') return 'pdf';
   return f; // png | webp
 }
 
@@ -696,4 +1085,7 @@ export function _resetForTest() {
   ctxCaps = null;
   blurWarningShown = false;
   redactWarningShown = false;
+  predictCache = null;
+  lastExportedBlob = null;
+  lastExportedFilename = null;
 }

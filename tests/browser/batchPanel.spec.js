@@ -54,13 +54,14 @@ test('batch panel: hidden in empty queue, visible after import', async ({ page }
   await expect(page.locator('#queue-view .batch-panel')).toBeVisible();
 });
 
-test('batch panel: contains all six sections', async ({ page }) => {
+test('batch panel: contains all expected sections', async ({ page }) => {
   await resetApp(page);
   await importImages(page, 1);
   await expect(page.locator('.batch-panel .batch-resize-section')).toHaveCount(1);
   await expect(page.locator('.batch-panel .batch-rotate-section')).toHaveCount(1);
   await expect(page.locator('.batch-panel .batch-adjust-section')).toHaveCount(1);
   await expect(page.locator('.batch-panel .batch-chroma-section')).toHaveCount(1);
+  await expect(page.locator('.batch-panel .batch-trim-section')).toHaveCount(1);
   await expect(page.locator('.batch-panel .batch-bg-section')).toHaveCount(1);
   await expect(page.locator('.batch-panel .batch-export-section')).toHaveCount(1);
 });

@@ -1,0 +1,24 @@
+Vendored library: jsPDF v3.0.4
+Upstream:        https://github.com/parallax/jsPDF
+License:         MIT (see LICENSE in this folder)
+Bundle:          jspdf.umd.min.js (UMD, ~419 KB unminified, ~132 KB gzipped)
+Source:          npm registry — `jspdf@3.0.4` tarball, `dist/jspdf.umd.min.js`
+
+Why UMD and not the ES bundle: jsPDF's `dist/jspdf.es.min.js` contains bare
+imports (`fflate`, `fast-png`, `@babel/runtime/...`) that would require their
+own vendoring or an import-map entry per dep. The UMD bundle is self-contained
+(it inlines those deps) and matches the loading pattern we already use for
+JSZip — a `<script>` injection in the loader module that resolves once the
+`globalThis.jspdf.jsPDF` global is set.
+
+Loaded by:       `js/vendor/jspdf-loader.js`
+Used by:         `js/render/pdfRenderer.js` (lazy — only when the user
+                 actually clicks PDF export). The 419 KB cost is paid zero
+                 times for users who never export a PDF.
+
+Sibling vendors under this folder: `../bgremove/`, `../onnxruntime-web/`,
+`../jszip.min.js`.
+
+Upgrade path: fetch a new `jspdf-<version>.tgz` from npm, copy the new
+`dist/jspdf.umd.min.js` into this folder, refresh `LICENSE`, bump the
+version note in `THIRD-PARTY.md`.

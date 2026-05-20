@@ -192,6 +192,27 @@ export const TRANSLATIONS = {
     resizeModePercent:        'Percent',
     resizeModeExact:          'Exact (W × H)',
 
+    // --- Trim / auto-crop (v1.1 Feature 3) --------------------------------
+    // Two buttons in the Resize panel (and in the batch panel) that crop
+    // out transparent or solid-color edges. The bake is destructive — it
+    // commits current adjustments and masks into the source bitmap — so
+    // the tooltip says so and the success toast quantifies the change.
+    trimTransparentBtn:       'Trim transparent edges',
+    trimTransparentAria:      'Crop to non-transparent content (commits current edits to the source)',
+    trimColorBtn:             'Trim background color (top-left pixel)',
+    trimColorAria:            'Crop to non-background-color content (commits current edits)',
+    trimToleranceLabel:       'Tolerance',
+    trimToleranceAria:        'Color match tolerance for trim',
+    trimEmpty:                'Image is entirely transparent (or matches the background color); nothing to trim.',
+    trimSuccess:              'Trimmed {fromW}×{fromH} → {toW}×{toH}',
+    trimNoChange:             'No trimmable edges found.',
+    trimTooltip:              'Find the bounding box of non-transparent or non-background content and crop to it. Commits current edits to the source pixels.',
+    batchSectionTrim:         'Trim',
+    batchTrimTransparentApply:'Trim transparent edges (all)',
+    batchTrimColorApply:      'Trim background color (all)',
+    batchToastTrimmed:        'Trimmed {count} images.',
+    batchToastTrimSkipped:    'Trim found nothing to remove on {count} images.',
+
     // --- Adjust panel -----------------------------------------------------
     adjustBrightness:         'Brightness',
     adjustContrast:           'Contrast',
@@ -230,6 +251,59 @@ export const TRANSLATIONS = {
     exportFormatPng:          'PNG',
     exportFormatJpg:          'JPG',
     exportFormatWebp:         'WebP',
+    exportFormatPdf:          'PDF',
+    exportFormatPdfAria:      'Export as PDF',
+    exportPredictedSize:      'Predicted size: {size}',
+    exportPredictedSizeBatch: '{count} images · est. {size} output',
+    exportPredictedEstimating: 'Predicted size: estimating…',
+    exportPredictedPdfNote:   'Predicted size: approximate for PDF',
+    exportSmallestPreset:     'Smallest size',
+    exportSmallestPresetAria: 'Find the format and quality that produces the smallest file size',
+    exportSmallestWorking:    'Comparing formats…',
+    exportSmallestToast:      'Smallest: {format} @ {quality}% ({size})',
+    exportSmallestToastBatch: 'Smallest for first image: {format} @ {quality}%',
+    exportSmallestNoSavings:  'PNG (lossless) is already smallest for this image.',
+
+    // --- PDF export (v1.1 Feature 4) -------------------------------------
+    // Page-size / orientation / margins / fit options surface in the Export
+    // panel when the user picks the PDF format chip. Batch PDF produces a
+    // single multi-page file (one image per page) — the headline differ-
+    // entiator vs the "Export queue (ZIP)" path.
+    pdfPageSize:              'Page size',
+    pdfPageSizeAria:          'PDF page size',
+    pdfPageFit:               'Fit to image',
+    pdfPageLetter:            'Letter (8.5×11 in)',
+    pdfPageA4:                'A4 (210×297 mm)',
+    pdfPageLegal:             'Legal (8.5×14 in)',
+    pdfPageA3:                'A3 (297×420 mm)',
+    pdfPageB5:                'B5 (176×250 mm)',
+    pdfOrientation:           'Orientation',
+    pdfOrientationAria:       'PDF page orientation',
+    pdfOrientationAuto:       'Auto',
+    pdfOrientationPortrait:   'Portrait',
+    pdfOrientationLandscape:  'Landscape',
+    pdfMargins:               'Margins (pt)',
+    pdfMarginsAria:           'PDF page margins in points',
+    pdfFitMode:               'Fit mode',
+    pdfFitModeAria:           'PDF image fit mode',
+    pdfFitContain:            'Contain (fit inside)',
+    pdfFitCover:              'Cover (fill, may crop)',
+    batchExportPdf:           'Export queue (single PDF)',
+    batchExportPdfAria:       'Export the entire queue as a single multi-page PDF',
+    pdfExportSuccess:         'Exported {filename} ({size})',
+    pdfBatchSuccess:          'Exported {count}-page PDF ({size})',
+
+    // --- EXIF / GPS strip disclosure (v1.1) ------------------------------
+    // Shown in the Export panel as an always-on privacy guarantee — every
+    // export is re-encoded through Canvas, which drops EXIF/XMP/GPS as a
+    // side-effect. The Verify button inspects the last exported blob's
+    // bytes so the guarantee is observable, not merely asserted.
+    exifStripped:             'Metadata stripped on export',
+    exifVerify:               'Verify last export',
+    exifVerifyNoExport:       'Export a file first, then verify.',
+    exifVerifyClean:          'No EXIF, XMP, or GPS data found in the last exported file.',
+    exifVerifyFound:          'Found metadata: {tags}',
+    exifTooltip:              'Every export is re-encoded through HTML Canvas, which produces a clean output without EXIF, XMP, or GPS metadata from the original.',
 
     // --- Crop tool --------------------------------------------------------
     cropTitle:                'Crop',
@@ -421,7 +495,7 @@ export const TRANSLATIONS = {
     privacyTitle:             'Privacy',
     privacyLead:              'NoAdsPhotos processes images entirely in your browser. Image files never leave your device — there is no upload, no server-side rendering, and no cloud round-trip.',
     privacyFetchesHeading:    'What this site fetches (from this origin only)',
-    privacyFetchesList:       '<li>HTML, CSS, JavaScript, and self-hosted Onest fonts.</li><li>The JSZip library (~97&nbsp;KB) — ONLY when you click "Export queue (ZIP)" for the first time. Vendored from <a href="https://stuk.github.io/jszip/" target="_blank" rel="noopener">stuk.github.io/jszip</a>, served from this origin. Used to package your batch exports into a single ZIP locally — no network traffic.</li><li>Self-hosted ML model files for background removal (the <a href="https://github.com/imgly/background-removal-js" target="_blank" rel="noopener">@imgly/background-removal</a> ISNET fp16 model + <a href="https://github.com/microsoft/onnxruntime" target="_blank" rel="noopener">ONNX Runtime Web</a> WASM kernels — both the CPU SIMD path and the WebGPU/JSEP path so the model can run on the GPU when available). These files (~118&nbsp;MB total) are part of the site code, shipped from this repository — they are NOT a separate first-use download from a third party. Your browser fetches them only the first time you click "Remove background", from this origin, and caches them thereafter. The browser pulls only the kernels it actually needs — CPU-only browsers never download the WebGPU variant, and vice versa.</li><li>The favicon and logo SVG.</li>',
+    privacyFetchesList:       '<li>HTML, CSS, JavaScript, and self-hosted Onest fonts.</li><li>The JSZip library (~97&nbsp;KB) — ONLY when you click "Export queue (ZIP)" for the first time. Vendored from <a href="https://stuk.github.io/jszip/" target="_blank" rel="noopener">stuk.github.io/jszip</a>, served from this origin. Used to package your batch exports into a single ZIP locally — no network traffic.</li><li>The jsPDF library (~420&nbsp;KB) — ONLY when you click PDF export for the first time. Vendored from <a href="https://github.com/parallax/jsPDF" target="_blank" rel="noopener">github.com/parallax/jsPDF</a> (npm), served from this origin. Used to build PDF files from your images locally — no network traffic.</li><li>Self-hosted ML model files for background removal (the <a href="https://github.com/imgly/background-removal-js" target="_blank" rel="noopener">@imgly/background-removal</a> ISNET fp16 model + <a href="https://github.com/microsoft/onnxruntime" target="_blank" rel="noopener">ONNX Runtime Web</a> WASM kernels — both the CPU SIMD path and the WebGPU/JSEP path so the model can run on the GPU when available). These files (~118&nbsp;MB total) are part of the site code, shipped from this repository — they are NOT a separate first-use download from a third party. Your browser fetches them only the first time you click "Remove background", from this origin, and caches them thereafter. The browser pulls only the kernels it actually needs — CPU-only browsers never download the WebGPU variant, and vice versa.</li><li>The favicon and logo SVG.</li>',
     privacyNotHeading:        'What this site does NOT do',
     privacyNotList:           '<li>No third-party CDNs (no Google Fonts, no jsDelivr, no cdnjs, no Cloudflare-served libraries).</li><li>No analytics or telemetry (no Google Analytics, Plausible, Fathom, Mixpanel, gtag, fbq, or similar).</li><li>No cookies. No fingerprinting. No localStorage data shared off-device.</li><li>No upload of your images, masks, or edits. No "save to cloud" feature exists.</li>',
     privacyExternalHeading:   'External links that open on click',
@@ -440,7 +514,7 @@ export const TRANSLATIONS = {
     exportNoImage:            'No image to export.',
     exportNotReady:           'Export not ready. Please refresh and try again.',
     exportDownloadFailedSingle: 'Export ready but download failed to start. See console.',
-    exportSuccess:            'Exported {filename}',
+    exportSuccessWithSize:    'Exported {filename} ({size})',
     exportQueueEmpty:         'Nothing to export — the queue is empty.',
     exportZipLibFailed:       'Failed to load ZIP library. Check your network or refresh.',
     exportCancelled:          'Export cancelled.',
@@ -448,7 +522,8 @@ export const TRANSLATIONS = {
     exportZipBuildFailed:     'Failed to build ZIP archive.',
     exportZipDownloadFailed:  'ZIP ready but download failed to start. See console.',
     exportBatchPartial:       'Exported {count} images ({failed} failed).',
-    exportBatchDone:          'Exported {count} images.',
+    exportBatchDoneWithSize:  'Exported {count} images, {size} ZIP',
+    exportBatchEachDoneWithSize: 'Exported {count} files, {size} total',
     exportNoCtxFilter:        'This browser lacks ctx.filter support; blur will not be baked into the export.',
     exportRedactNote:         'Redact regions export as a placeholder in v1. Full blur/pixelate bake is a v2 follow-up.',
     exportUnsupportedFormat:  "This browser doesn't support {format}. Try PNG or JPEG.",

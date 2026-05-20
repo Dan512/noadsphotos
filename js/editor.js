@@ -15,6 +15,7 @@
 import { getState, subscribe, update } from './state.js';
 import { applyResize } from './ops/transforms.js';
 import { applyAdjust, applyFilterPreset, resetAllAdjust, ADJUST_RANGES } from './ops/adjust.js';
+import { computeTrimBake, applyTrimBakeToState } from './ops/trim.js';
 import { effectiveImageSize } from './geometry.js';
 import { removeOverlay, reorderOverlays } from './overlays.js';
 import { undo, redo, getHistoryStats, subscribeHistory, recordOp } from './history.js';
@@ -23,8 +24,19 @@ import {
   withAdjustHistory,
   withOverlaysHistory,
 } from './historyOps.js';
-import { exportSingle } from './exporter.js';
+import {
+  exportSingle,
+  exportSinglePdf,
+  pickSmallestFormat,
+  formatBytes,
+  setPredictCache,
+  getExportContext,
+  getLastExportedBlob,
+} from './exporter.js';
+import { renderForExport } from './render/exportRenderer.js';
+import { showToast } from './errors.js';
 import { t } from './i18n.js';
+import { hasMetadata } from './exif.js';
 
 // Tool list. Labels go through t() at render time; the i18n key is stored
 // alongside so render code can re-derive on language switch.
@@ -480,6 +492,63 @@ function buildResizePanel() {
   readout.textContent = t('resizeOutputEmpty');
   root.appendChild(readout);
 
+  // --- Trim subsection (v1.1 Feature 3) -----------------------------------
+  // Two buttons + a tolerance slider. The slider is only meaningful for the
+  // "Trim background color" mode but we keep it always visible so the user
+  // can see/change the value before clicking.
+  const trimGroup = document.createElement('div');
+  trimGroup.className = 'resize-trim-group';
+  trimGroup.title = t('trimTooltip');
+
+  const trimTransparentBtn = document.createElement('button');
+  trimTransparentBtn.type = 'button';
+  trimTransparentBtn.className = 'resize-trim-transparent';
+  trimTransparentBtn.textContent = t('trimTransparentBtn');
+  trimTransparentBtn.setAttribute('aria-label', t('trimTransparentAria'));
+  trimTransparentBtn.title = t('trimTooltip');
+  trimGroup.appendChild(trimTransparentBtn);
+
+  const trimTolRow = document.createElement('label');
+  trimTolRow.className = 'resize-row resize-trim-tol-row';
+  const trimTolLabel = document.createElement('span');
+  trimTolLabel.textContent = t('trimToleranceLabel');
+  trimTolRow.appendChild(trimTolLabel);
+  const trimTolInput = document.createElement('input');
+  trimTolInput.type = 'range';
+  trimTolInput.min = '0';
+  trimTolInput.max = '50';
+  trimTolInput.step = '1';
+  trimTolInput.value = '8';
+  trimTolInput.className = 'resize-trim-tol';
+  trimTolInput.setAttribute('aria-label', t('trimToleranceAria'));
+  trimTolRow.appendChild(trimTolInput);
+  const trimTolReadout = document.createElement('span');
+  trimTolReadout.className = 'resize-trim-tol-readout';
+  trimTolReadout.textContent = '8';
+  trimTolRow.appendChild(trimTolReadout);
+  trimGroup.appendChild(trimTolRow);
+  trimTolInput.addEventListener('input', () => {
+    trimTolReadout.textContent = trimTolInput.value;
+  });
+
+  const trimColorBtn = document.createElement('button');
+  trimColorBtn.type = 'button';
+  trimColorBtn.className = 'resize-trim-color';
+  trimColorBtn.textContent = t('trimColorBtn');
+  trimColorBtn.setAttribute('aria-label', t('trimColorAria'));
+  trimColorBtn.title = t('trimTooltip');
+  trimGroup.appendChild(trimColorBtn);
+
+  root.appendChild(trimGroup);
+
+  trimTransparentBtn.addEventListener('click', () => {
+    runEditorTrim('transparent', 0, trimTransparentBtn, trimColorBtn);
+  });
+  trimColorBtn.addEventListener('click', () => {
+    const tol = Number(trimTolInput.value) || 0;
+    runEditorTrim('color', tol, trimTransparentBtn, trimColorBtn);
+  });
+
   resizePanelBody.replaceChildren(root);
   resizeEls = { modeSel, valueLabel, valueInput, heightWrap, heightInput, lockWrap, lockChk, readout };
 
@@ -542,6 +611,137 @@ function commitResizeHistory(label) {
     before: { transforms: before },
     after:  { transforms: after  },
   });
+}
+
+// --- Trim (v1.1 Feature 3): bake current edits + crop to content bbox ---
+//
+// The trim flow:
+//   1. Render the full effective image to a PNG blob, decode + scan pixels.
+//   2. Find the bbox of "content" via the chosen predicate.
+//   3. If empty, toast and stop.
+//   4. Encode the cropped region as a fresh PNG, decode into an ImageBitmap.
+//   5. Snapshot the before-state (source + transforms + chromakey + bgMask
+//      + adjust + filterPreset + bgRemoved) and replace those wholesale on
+//      the image: new source bitmap/blob/dims, cleared transforms,
+//      cleared masks, cleared adjustments. Overlays stay intact.
+//   6. Record ONE history op so a single Ctrl+Z restores everything.
+//
+// While the bake is running, both Trim buttons are disabled to avoid the
+// user double-firing it.
+
+// Top-level keys we snapshot before/after a trim bake. Includes `source`
+// because the bitmap/blob/dims are replaced, and every other category that
+// gets cleared on bake.
+const KEYS_TRIM_BAKE = ['source', 'transforms', 'adjust', 'filterPreset', 'chromakey', 'chromakeyMask', 'bgRemoved', 'bgMask'];
+
+async function runEditorTrim(mode, tolerance, btnA, btnB) {
+  const img = getActiveImage();
+  if (!img) return;
+  const id = img.id;
+
+  const { lifecycle, caps } = getExportContext();
+  if (!lifecycle || !caps) {
+    showToast(t('toastBootFailed'), { variant: 'error' });
+    return;
+  }
+
+  // Lock buttons while baking. We re-enable in a finally so a thrown
+  // promise still hands control back.
+  const prevA = btnA ? btnA.disabled : false;
+  const prevB = btnB ? btnB.disabled : false;
+  if (btnA) btnA.disabled = true;
+  if (btnB) btnB.disabled = true;
+
+  try {
+    const bake = await computeTrimBake({
+      imageState: img,
+      caps,
+      lifecycle,
+      renderForExport,
+      mode,
+      tolerance,
+    });
+
+    if (!bake) {
+      showToast(t('trimEmpty'), { variant: 'warn' });
+      return;
+    }
+
+    // If the bbox covers the entire rendered output, the trim found nothing
+    // to remove. Don't bake — that would waste history budget on a no-op.
+    if (bake.toW === bake.fromW && bake.toH === bake.fromH) {
+      try { bake.bitmap.close(); } catch { /* ignore */ }
+      showToast(t('trimNoChange'), { variant: 'info' });
+      return;
+    }
+
+    // Snapshot the BEFORE state outside the update boundary so the history
+    // entry captures the old typed arrays + nested objects by reference.
+    const before = pickKeysForTrim(img);
+
+    // Apply the bake. Replace source.bitmap (keeping the existing name +
+    // thumbnail; the latter is regenerated by the queue auto-refresh path).
+    update(s => {
+      const target = s.images[id];
+      if (!target) return;
+      applyTrimBakeToState(target, bake);
+    });
+
+    const after = pickKeysForTrim(getState().images[id]);
+    recordOp({
+      label: mode === 'transparent' ? 'Trim transparent edges' : 'Trim background color',
+      imageId: id,
+      kind: 'transforms',
+      before,
+      after,
+    });
+
+    showToast(t('trimSuccess', {
+      fromW: bake.fromW,
+      fromH: bake.fromH,
+      toW: bake.toW,
+      toH: bake.toH,
+    }), { variant: 'info' });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('Trim failed:', err);
+    showToast(t('trimEmpty'), { variant: 'error' });
+  } finally {
+    if (btnA) btnA.disabled = prevA;
+    if (btnB) btnB.disabled = prevB;
+  }
+}
+
+// Build a structuredClone-friendly snapshot of the keys we'll restore on
+// undo. Typed arrays (chromakeyMask, bgMask) and ImageBitmap-like values
+// pass through by reference — matches history.js's `pickKeys` behavior.
+function pickKeysForTrim(img) {
+  const out = Object.create(null);
+  if (!img) return out;
+  for (const k of KEYS_TRIM_BAKE) {
+    out[k] = cloneTrimSnapshotValue(img[k]);
+  }
+  return out;
+}
+
+function cloneTrimSnapshotValue(v) {
+  if (v == null) return v;
+  if (typeof v !== 'object') return v;
+  if (ArrayBuffer.isView(v)) return v;
+  if (typeof ImageBitmap !== 'undefined' && v instanceof ImageBitmap) return v;
+  // `source` holds an ImageBitmap inside; structuredClone would refuse it.
+  // Shallow-clone the object so we keep the bitmap/blob/thumbnail refs but
+  // get an independent container.
+  if (typeof structuredClone === 'function') {
+    try { return structuredClone(v); }
+    catch { /* fall through */ }
+  }
+  // Fallback: shallow copy. Source contains primitives + Blob + ImageBitmap;
+  // none need deep cloning to be undo-safe.
+  if (Array.isArray(v)) return v.slice();
+  const out = Object.create(null);
+  for (const k of Object.keys(v)) out[k] = v[k];
+  return out;
 }
 
 function getActiveImage() {
@@ -987,9 +1187,16 @@ export function _resetForTest() {
     cancelAnimationFrame(exportQualityRafHandle);
     exportQualityRafHandle = null;
   }
+  if (predictTimerId != null) {
+    clearTimeout(predictTimerId);
+    predictTimerId = null;
+  }
   adjustPendingValues.clear();
   adjustPendingPreset = null;
   exportPendingQuality = null;
+  predictRunSeq = 0;
+  lastPredictKey = null;
+  smallestInFlight = false;
 }
 
 // --------------------------------------------------------------------------
@@ -1006,11 +1213,46 @@ const EXPORT_FORMATS = [
   { id: 'png',  i18n: 'exportFormatPng',  mime: 'image/png'  },
   { id: 'jpeg', i18n: 'exportFormatJpg',  mime: 'image/jpeg' },
   { id: 'webp', i18n: 'exportFormatWebp', mime: 'image/webp' },
+  // PDF gets a dedicated aria label key (`exportFormatPdfAria`) rather than
+  // the generic `exportFormatAria` interpolation so screen readers hear
+  // "Export as PDF" instead of "Export as {label}".
+  { id: 'pdf',  i18n: 'exportFormatPdf',  mime: 'application/pdf' },
 ];
 
-let exportEls = null; // { root, formatBtns: Map<id, btn>, qualityRow, qualityInput, qualityReadout, filenameInput, filenameHelp, dimsReadout, downloadBtn }
+// PDF page-size dropdown options. 'fit' is the default; named paper sizes
+// follow the i18n keys. Order matches how Acrobat/Preview lists them.
+const PDF_PAGE_SIZES = [
+  { id: 'fit',    i18n: 'pdfPageFit'    },
+  { id: 'letter', i18n: 'pdfPageLetter' },
+  { id: 'a4',     i18n: 'pdfPageA4'     },
+  { id: 'legal',  i18n: 'pdfPageLegal'  },
+  { id: 'a3',     i18n: 'pdfPageA3'     },
+  { id: 'b5',     i18n: 'pdfPageB5'     },
+];
+
+const PDF_ORIENTATIONS = [
+  { id: 'auto',      i18n: 'pdfOrientationAuto'      },
+  { id: 'portrait',  i18n: 'pdfOrientationPortrait'  },
+  { id: 'landscape', i18n: 'pdfOrientationLandscape' },
+];
+
+const PDF_FIT_MODES = [
+  { id: 'contain', i18n: 'pdfFitContain' },
+  { id: 'cover',   i18n: 'pdfFitCover'   },
+];
+
+let exportEls = null; // { root, formatBtns: Map<id, btn>, qualityRow, qualityInput, qualityReadout, filenameInput, filenameHelp, dimsReadout, predictedReadout, smallestBtn, downloadBtn }
 let exportQualityRafHandle = null;
 let exportPendingQuality = null;
+
+// Predicted-encode debounce: 300ms after the last format/quality/state
+// change before we run a real encode. Cancels in-flight encodes on new
+// trigger so the user never sees stale values.
+let predictTimerId = null;
+let predictRunSeq = 0;
+let lastPredictKey = null;
+let smallestInFlight = false;
+const PREDICT_DEBOUNCE_MS = 300;
 
 function buildExportPanel() {
   if (!exportPanelBody) return;
@@ -1029,12 +1271,27 @@ function buildExportPanel() {
     btn.dataset.format = fmt.id;
     const fmtLabel = t(fmt.i18n);
     btn.textContent = fmtLabel;
-    btn.setAttribute('aria-label', t('exportFormatAria', { label: fmtLabel }));
+    // PDF gets a dedicated aria label (the generic interpolation reads odd
+    // for an acronym format name); other formats reuse `exportFormatAria`.
+    const ariaLabel = fmt.id === 'pdf' ? t('exportFormatPdfAria') : t('exportFormatAria', { label: fmtLabel });
+    btn.setAttribute('aria-label', ariaLabel);
     btn.addEventListener('click', () => onFormatChange(fmt.id));
     formatRow.appendChild(btn);
     formatBtns.set(fmt.id, btn);
   }
   root.appendChild(formatRow);
+
+  // --- "Smallest size" preset button ---
+  // Sits directly under the format chips so it reads as part of the same
+  // group ("which format/quality should I pick?"). Clicking runs a small
+  // format-comparison sweep and writes the winner into state.export.
+  const smallestBtn = document.createElement('button');
+  smallestBtn.type = 'button';
+  smallestBtn.className = 'smallest-preset-btn';
+  smallestBtn.textContent = t('exportSmallestPreset');
+  smallestBtn.setAttribute('aria-label', t('exportSmallestPresetAria'));
+  smallestBtn.addEventListener('click', onSmallestPreset);
+  root.appendChild(smallestBtn);
 
   // --- Quality slider row (only visible for JPG/WebP) ---
   const qualityRow = document.createElement('label');
@@ -1059,6 +1316,95 @@ function buildExportPanel() {
   qualityInput.addEventListener('input', () => onQualityInput(qualityInput.value));
   qualityInput.addEventListener('change', () => onQualityCommit());
   root.appendChild(qualityRow);
+
+  // --- PDF options block (visible only when format === 'pdf') ---
+  // Wraps page size + orientation + margins + fit mode controls under a
+  // single container so we can hide/show them together via the .hidden
+  // attribute. Sits where the quality slider does — these are the controls
+  // a PDF user actually needs to dial in.
+  const pdfOptsRow = document.createElement('div');
+  pdfOptsRow.className = 'pdf-opts-row';
+  pdfOptsRow.hidden = true;
+
+  // Page size dropdown.
+  const pdfPageSizeLabel = document.createElement('label');
+  pdfPageSizeLabel.className = 'pdf-pagesize-row';
+  const pdfPageSizeSpan = document.createElement('span');
+  pdfPageSizeSpan.textContent = t('pdfPageSize');
+  pdfPageSizeLabel.appendChild(pdfPageSizeSpan);
+  const pdfPageSizeSel = document.createElement('select');
+  pdfPageSizeSel.className = 'pdf-pagesize-select';
+  pdfPageSizeSel.setAttribute('aria-label', t('pdfPageSizeAria'));
+  for (const ps of PDF_PAGE_SIZES) {
+    const opt = document.createElement('option');
+    opt.value = ps.id;
+    opt.textContent = t(ps.i18n);
+    pdfPageSizeSel.appendChild(opt);
+  }
+  pdfPageSizeLabel.appendChild(pdfPageSizeSel);
+  pdfPageSizeSel.addEventListener('change', () => onPdfOptChange('pageSize', pdfPageSizeSel.value));
+  pdfOptsRow.appendChild(pdfPageSizeLabel);
+
+  // Orientation dropdown.
+  const pdfOrientLabel = document.createElement('label');
+  pdfOrientLabel.className = 'pdf-orientation-row';
+  const pdfOrientSpan = document.createElement('span');
+  pdfOrientSpan.textContent = t('pdfOrientation');
+  pdfOrientLabel.appendChild(pdfOrientSpan);
+  const pdfOrientSel = document.createElement('select');
+  pdfOrientSel.className = 'pdf-orientation-select';
+  pdfOrientSel.setAttribute('aria-label', t('pdfOrientationAria'));
+  for (const o of PDF_ORIENTATIONS) {
+    const opt = document.createElement('option');
+    opt.value = o.id;
+    opt.textContent = t(o.i18n);
+    pdfOrientSel.appendChild(opt);
+  }
+  pdfOrientLabel.appendChild(pdfOrientSel);
+  pdfOrientSel.addEventListener('change', () => onPdfOptChange('orientation', pdfOrientSel.value));
+  pdfOptsRow.appendChild(pdfOrientLabel);
+
+  // Margins number input.
+  const pdfMarginLabel = document.createElement('label');
+  pdfMarginLabel.className = 'pdf-margin-row';
+  const pdfMarginSpan = document.createElement('span');
+  pdfMarginSpan.textContent = t('pdfMargins');
+  pdfMarginLabel.appendChild(pdfMarginSpan);
+  const pdfMarginInput = document.createElement('input');
+  pdfMarginInput.type = 'number';
+  pdfMarginInput.className = 'pdf-margin-input';
+  pdfMarginInput.min = '0';
+  pdfMarginInput.max = '72';
+  pdfMarginInput.step = '1';
+  pdfMarginInput.value = '0';
+  pdfMarginInput.setAttribute('aria-label', t('pdfMarginsAria'));
+  pdfMarginLabel.appendChild(pdfMarginInput);
+  pdfMarginInput.addEventListener('input', () => {
+    const v = Number(pdfMarginInput.value);
+    if (Number.isFinite(v)) onPdfOptChange('margins', Math.max(0, Math.min(72, v)));
+  });
+  pdfOptsRow.appendChild(pdfMarginLabel);
+
+  // Fit mode dropdown (only meaningful for non-'fit' page sizes).
+  const pdfFitLabel = document.createElement('label');
+  pdfFitLabel.className = 'pdf-fitmode-row';
+  const pdfFitSpan = document.createElement('span');
+  pdfFitSpan.textContent = t('pdfFitMode');
+  pdfFitLabel.appendChild(pdfFitSpan);
+  const pdfFitSel = document.createElement('select');
+  pdfFitSel.className = 'pdf-fitmode-select';
+  pdfFitSel.setAttribute('aria-label', t('pdfFitModeAria'));
+  for (const f of PDF_FIT_MODES) {
+    const opt = document.createElement('option');
+    opt.value = f.id;
+    opt.textContent = t(f.i18n);
+    pdfFitSel.appendChild(opt);
+  }
+  pdfFitLabel.appendChild(pdfFitSel);
+  pdfFitSel.addEventListener('change', () => onPdfOptChange('fitMode', pdfFitSel.value));
+  pdfOptsRow.appendChild(pdfFitLabel);
+
+  root.appendChild(pdfOptsRow);
 
   // --- Filename template input ---
   const filenameRow = document.createElement('label');
@@ -1094,6 +1440,15 @@ function buildExportPanel() {
   dimsReadout.textContent = t('exportOutputEmpty');
   root.appendChild(dimsReadout);
 
+  // --- Predicted size readout (live, debounced 300ms) ---
+  // Shows the actual bytes a Download would produce at the current settings.
+  // Sits below the dims so the two readouts pair as "what" + "how big".
+  const predictedReadout = document.createElement('div');
+  predictedReadout.className = 'predicted-size';
+  predictedReadout.setAttribute('aria-live', 'polite');
+  predictedReadout.textContent = t('exportPredictedEstimating');
+  root.appendChild(predictedReadout);
+
   // --- Download button ---
   const downloadBtn = document.createElement('button');
   downloadBtn.type = 'button';
@@ -1103,16 +1458,59 @@ function buildExportPanel() {
   downloadBtn.addEventListener('click', onDownload);
   root.appendChild(downloadBtn);
 
+  // --- EXIF / GPS strip disclosure -----------------------------------------
+  // Always-on guarantee: every export is re-encoded through Canvas, which
+  // drops EXIF, XMP, and GPS metadata as a natural side-effect. The badge
+  // and Verify button make that guarantee INSPECTABLE — pressing the button
+  // reads the last exported blob's bytes and toasts what was (or wasn't)
+  // found. No setting toggle on purpose: a toggle whose two states behaved
+  // identically would be deceptive.
+  const exifRow = document.createElement('div');
+  exifRow.className = 'exif-status';
+  // The check glyph reads as "stripped" on its own; the text label conveys
+  // the same meaning for assistive tech / colorblind users.
+  const exifBadge = document.createElement('span');
+  exifBadge.className = 'exif-badge';
+  // Plain ASCII check so it renders identically across fonts/locales.
+  // Color is set via CSS — the icon also has a "stripped" textContent label
+  // adjacent so Dan and other colorblind users don't have to parse a color.
+  exifBadge.textContent = '✓';
+  exifBadge.setAttribute('aria-hidden', 'true');
+  exifRow.appendChild(exifBadge);
+  const exifLabel = document.createElement('span');
+  exifLabel.className = 'exif-label';
+  exifLabel.textContent = t('exifStripped');
+  exifLabel.setAttribute('title', t('exifTooltip'));
+  exifRow.appendChild(exifLabel);
+  const exifVerifyBtn = document.createElement('button');
+  exifVerifyBtn.type = 'button';
+  exifVerifyBtn.className = 'exif-verify-btn';
+  exifVerifyBtn.textContent = t('exifVerify');
+  exifVerifyBtn.setAttribute('aria-label', t('exifVerify'));
+  exifVerifyBtn.addEventListener('click', onVerifyExif);
+  exifRow.appendChild(exifVerifyBtn);
+  root.appendChild(exifRow);
+
   exportPanelBody.replaceChildren(root);
   exportEls = {
-    root, formatBtns, qualityRow, qualityInput, qualityReadout,
-    filenameInput, filenameHelp, dimsReadout, downloadBtn,
+    root, formatBtns, smallestBtn, qualityRow, qualityInput, qualityReadout,
+    filenameInput, filenameHelp, dimsReadout, predictedReadout, downloadBtn,
+    exifRow, exifBadge, exifLabel, exifVerifyBtn,
+    // PDF options
+    pdfOptsRow, pdfPageSizeSel, pdfOrientSel, pdfMarginInput, pdfFitSel, pdfFitLabel,
   };
   syncExportPanel();
 }
 
 function onFormatChange(format) {
   update(s => { s.export.format = format; });
+}
+
+function onPdfOptChange(key, value) {
+  update(s => {
+    if (!s.export.pdf) s.export.pdf = { pageSize: 'fit', orientation: 'auto', margins: undefined, fitMode: 'contain' };
+    s.export.pdf[key] = value;
+  });
 }
 
 function onQualityInput(rawValue) {
@@ -1155,18 +1553,221 @@ function onFilenameInput(rawValue) {
 function onDownload() {
   const img = getActiveImage();
   if (!img) return;
+  const s = getState();
+  // PDF gets its own pipeline (jsPDF + image embed). The predict cache only
+  // applies to the raw-format encoders, so we don't pass predictKey for PDF.
+  if ((s.export && s.export.format) === 'pdf') {
+    exportSinglePdf(img.id).catch(err => {
+      // eslint-disable-next-line no-console
+      console.error('Download button (PDF):', err);
+    });
+    return;
+  }
+  // Pass the current predict-cache key so exporter can reuse the encoded
+  // bytes from the panel's predict pass (avoids re-encoding ~50-300ms on
+  // typical photos).
+  const predictKey = lastPredictKey;
   // Fire-and-forget; exporter shows toasts internally on success/failure.
-  exportSingle(img.id).catch(err => {
+  exportSingle(img.id, { predictKey }).catch(err => {
     // exportSingle catches its own errors, but guard against unexpected throws.
     // eslint-disable-next-line no-console
     console.error('Download button:', err);
   });
 }
 
+// Inspect the last-exported Blob for leaked EXIF / XMP / GPS metadata. Toasts
+// either "no metadata found" (the expected privacy guarantee) or, if a
+// future regression is introduced, the list of tags that were detected.
+async function onVerifyExif() {
+  const last = getLastExportedBlob();
+  if (!last || !last.blob) {
+    showToast(t('exifVerifyNoExport'), { variant: 'info' });
+    return;
+  }
+  let result;
+  try {
+    result = await hasMetadata(last.blob);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('onVerifyExif:', err);
+    showToast(t('exportGenericFailed'), { variant: 'error' });
+    return;
+  }
+  if (!result.exif && !result.xmp && !result.gps) {
+    showToast(t('exifVerifyClean'), { variant: 'info' });
+    return;
+  }
+  // Anything in the tags list is a real surprise — privacy regression.
+  // Surface the tag names so the user (and the bug tracker) can see what
+  // leaked. Variant: warn rather than error so the toast styling matches
+  // the "heads up" intent rather than implying a hard failure.
+  const tagsList = (result.tags && result.tags.length)
+    ? result.tags.join(', ')
+    : 'unknown';
+  showToast(t('exifVerifyFound', { tags: tagsList }), { variant: 'warn' });
+}
+
+// "Smallest size" preset: run the format-comparison sweep, pick the winner,
+// write into state.export, and show a toast summarizing the choice. We
+// disable the button + show a spinner-ish label while the sweep runs (8+
+// encodes can be ~1s on a large photo).
+async function onSmallestPreset() {
+  const img = getActiveImage();
+  if (!img) return;
+  if (smallestInFlight) return;
+  const ctx = getExportContext();
+  if (!ctx.lifecycle || !ctx.caps) return;
+  smallestInFlight = true;
+  const btn = exportEls && exportEls.smallestBtn;
+  const origLabel = btn ? btn.textContent : null;
+  if (btn) {
+    btn.disabled = true;
+    btn.classList.add('is-working');
+    btn.textContent = t('exportSmallestWorking');
+  }
+  try {
+    const result = await pickSmallestFormat(img, ctx.caps, ctx.lifecycle);
+    update(s => {
+      s.export.format = result.format;
+      s.export.quality = result.quality;
+    });
+    // Cache the winning blob so the next Download click reuses it without
+    // re-encoding. Use the same key shape syncExportPanel writes.
+    const stateSig = stateSignature(getActiveImage());
+    const newKey = `${img.id}::${result.format}::${result.quality}::${stateSig}`;
+    setPredictCache(newKey, result.blob);
+    lastPredictKey = newKey;
+    if (exportEls && exportEls.predictedReadout) {
+      exportEls.predictedReadout.textContent = t('exportPredictedSize', { size: formatBytes(result.blob.size) });
+    }
+    // Compose the toast. If the winner is PNG (i.e., PNG beat every other
+    // candidate), say so plainly — no "% smaller" claim makes sense.
+    const fmtLabel = formatLabel(result.format);
+    const qPct = Math.round((result.quality || 0) * 100);
+    if (result.format === 'png') {
+      showToast(t('exportSmallestNoSavings'), { variant: 'info' });
+    } else {
+      const sizeStr = formatBytes(result.blob.size);
+      let line = t('exportSmallestToast', { format: fmtLabel, quality: qPct, size: sizeStr });
+      if (result.pngSize && result.blob.size < result.pngSize) {
+        const pct = Math.round(((result.pngSize - result.blob.size) / result.pngSize) * 100);
+        line += ` — ${pct}% smaller than PNG`;
+      }
+      showToast(line, { variant: 'info' });
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('onSmallestPreset:', err);
+    showToast(t('exportGenericFailed'), { variant: 'error' });
+  } finally {
+    smallestInFlight = false;
+    if (btn) {
+      btn.disabled = !getActiveImage();
+      btn.classList.remove('is-working');
+      btn.textContent = origLabel || t('exportSmallestPreset');
+    }
+  }
+}
+
+function formatLabel(fmt) {
+  if (fmt === 'jpeg') return 'JPG';
+  if (fmt === 'webp') return 'WebP';
+  if (fmt === 'png')  return 'PNG';
+  return String(fmt).toUpperCase();
+}
+
+// Compose a string signature of the bits of an image that affect its
+// rendered output. Used as a cache key for the predict-encode pass.
+// We stringify subobjects defensively because some of them are mutated in
+// place by ops modules — reference identity isn't enough.
+function stateSignature(img) {
+  if (!img) return '';
+  const parts = [
+    stringify(img.transforms),
+    stringify(img.adjust),
+    String(img.filterPreset || 'none'),
+    img.chromakeyMask ? `cm:${img.chromakeyMask.length}` : 'cm:0',
+    img.bgMask ? `bm:${img.bgMask.length}` : 'bm:0',
+    stringify(img.chromakey),
+    overlaysSig(img.overlays),
+  ];
+  return parts.join('|');
+}
+
+function stringify(v) {
+  if (v == null) return '';
+  try { return JSON.stringify(v); } catch { return ''; }
+}
+
+function overlaysSig(overlays) {
+  if (!Array.isArray(overlays) || overlays.length === 0) return 'o:0';
+  // We only need a string that changes when any overlay's payload changes,
+  // not full equality. JSON.stringify is fine here — overlays are small.
+  try {
+    return `o:${JSON.stringify(overlays)}`;
+  } catch {
+    return `o:${overlays.length}`;
+  }
+}
+
+// Schedule a predict encode (debounced). Cancels any in-flight predict by
+// bumping the run sequence — only the latest call's result lands.
+function schedulePredictEncode() {
+  if (predictTimerId != null) {
+    clearTimeout(predictTimerId);
+    predictTimerId = null;
+  }
+  predictTimerId = setTimeout(() => {
+    predictTimerId = null;
+    runPredictEncode();
+  }, PREDICT_DEBOUNCE_MS);
+}
+
+async function runPredictEncode() {
+  const img = getActiveImage();
+  if (!img) return;
+  const ctx = getExportContext();
+  if (!ctx.lifecycle || !ctx.caps) return;
+  const s = getState();
+  const fmt = (s.export && s.export.format) || 'png';
+  const q = Number.isFinite(s.export && s.export.quality) ? s.export.quality : 0.92;
+  const stateSig = stateSignature(img);
+  const key = `${img.id}::${fmt}::${q}::${stateSig}`;
+  // If our cache already has this key (e.g., from a prior predict that's
+  // still fresh), update the readout from the cached size.
+  if (lastPredictKey === key && exportEls && exportEls.predictedReadout) {
+    // No-op — readout already shows this value.
+    return;
+  }
+  const mySeq = ++predictRunSeq;
+  if (exportEls && exportEls.predictedReadout) {
+    exportEls.predictedReadout.textContent = t('exportPredictedEstimating');
+  }
+  let blob;
+  try {
+    blob = await renderForExport(img, { format: fmt, quality: q }, ctx.caps, ctx.lifecycle);
+  } catch (err) {
+    // Don't toast — predict encodes are background; just show "—".
+    if (mySeq === predictRunSeq && exportEls && exportEls.predictedReadout) {
+      exportEls.predictedReadout.textContent = t('exportOutputEmpty');
+    }
+    return;
+  }
+  // Bail if a newer predict has been scheduled since.
+  if (mySeq !== predictRunSeq) return;
+  setPredictCache(key, blob);
+  lastPredictKey = key;
+  if (exportEls && exportEls.predictedReadout) {
+    exportEls.predictedReadout.textContent = t('exportPredictedSize', { size: formatBytes(blob.size) });
+  }
+}
+
 function syncExportPanel() {
   if (!exportEls) return;
   const s = getState();
   const exp = s.export || { format: 'png', quality: 0.92, filenameTemplate: '{base}-edited' };
+  const pdfOpts = exp.pdf || { pageSize: 'fit', orientation: 'auto', margins: undefined, fitMode: 'contain' };
+  const isPdf = exp.format === 'pdf';
 
   // Active format chip.
   for (const [id, btn] of exportEls.formatBtns) {
@@ -1174,13 +1775,42 @@ function syncExportPanel() {
     btn.setAttribute('aria-pressed', id === exp.format ? 'true' : 'false');
   }
 
-  // Quality slider: visible for JPG/WebP, hidden for PNG (lossless).
+  // Quality slider: visible for JPG/WebP, hidden for PNG (lossless) and PDF
+  // (PDF embeds JPEG at a fixed 0.92 quality — the comparison doesn't apply).
   const showQuality = exp.format === 'jpeg' || exp.format === 'webp';
   exportEls.qualityRow.hidden = !showQuality;
   if (showQuality && document.activeElement !== exportEls.qualityInput) {
     const q = Number.isFinite(exp.quality) ? exp.quality : 0.92;
     exportEls.qualityInput.value = String(q);
     exportEls.qualityReadout.textContent = String(Math.round(q * 100));
+  }
+
+  // PDF options visible only when PDF is selected.
+  if (exportEls.pdfOptsRow) exportEls.pdfOptsRow.hidden = !isPdf;
+  if (exportEls.pdfPageSizeSel && document.activeElement !== exportEls.pdfPageSizeSel) {
+    exportEls.pdfPageSizeSel.value = pdfOpts.pageSize || 'fit';
+  }
+  if (exportEls.pdfOrientSel && document.activeElement !== exportEls.pdfOrientSel) {
+    exportEls.pdfOrientSel.value = pdfOpts.orientation || 'auto';
+  }
+  if (exportEls.pdfMarginInput && document.activeElement !== exportEls.pdfMarginInput) {
+    const defaultMargin = (pdfOpts.pageSize === 'fit' || !pdfOpts.pageSize) ? 0 : 36;
+    const m = Number.isFinite(pdfOpts.margins) ? pdfOpts.margins : defaultMargin;
+    exportEls.pdfMarginInput.value = String(m);
+  }
+  if (exportEls.pdfFitSel && document.activeElement !== exportEls.pdfFitSel) {
+    exportEls.pdfFitSel.value = pdfOpts.fitMode || 'contain';
+  }
+  // Fit-mode is only meaningful when the page size is fixed (not 'fit').
+  if (exportEls.pdfFitLabel) {
+    const fitRelevant = (pdfOpts.pageSize && pdfOpts.pageSize !== 'fit');
+    exportEls.pdfFitLabel.hidden = !fitRelevant;
+  }
+
+  // "Smallest size" preset is meaningless for PDF — the JPG-vs-PNG-vs-WebP
+  // sweep doesn't apply when the container is fixed.
+  if (exportEls.smallestBtn) {
+    exportEls.smallestBtn.hidden = isPdf;
   }
 
   // Filename template (don't clobber while the user is typing).
@@ -1193,14 +1823,41 @@ function syncExportPanel() {
   if (!img) {
     exportEls.dimsReadout.textContent = t('exportOutputEmpty');
     exportEls.downloadBtn.disabled = true;
+    if (exportEls.smallestBtn) exportEls.smallestBtn.disabled = true;
+    if (exportEls.predictedReadout) exportEls.predictedReadout.textContent = t('exportOutputEmpty');
     return;
   }
   exportEls.downloadBtn.disabled = false;
+  if (exportEls.smallestBtn) exportEls.smallestBtn.disabled = smallestInFlight;
   const dims = effectiveImageSize(img);
   if (dims.w > 0 && dims.h > 0) {
     exportEls.dimsReadout.textContent = t('exportOutput', { w: Math.round(dims.w), h: Math.round(dims.h) });
   } else {
     exportEls.dimsReadout.textContent = t('exportOutputEmpty');
+  }
+
+  // Predicted-size readout: for raw formats we run a real encode and report
+  // bytes. For PDF, the cost is dominated by jsPDF's container + the
+  // embedded JPEG bake — a precise predict would mean running the full PDF
+  // build, which is expensive enough that we skip it in v1.1 and show a
+  // "approximate" note instead. The actual size shows up in the success
+  // toast after the user clicks Download.
+  if (isPdf) {
+    if (exportEls.predictedReadout) {
+      exportEls.predictedReadout.textContent = t('exportPredictedPdfNote');
+    }
+    return;
+  }
+
+  // Trigger a debounced predict encode if the relevant state signature has
+  // changed since the last predict. We compute the key here so any state
+  // change that affects the rendered output (transforms / adjust / overlays /
+  // masks / format / quality) re-fires the predict.
+  const sig = stateSignature(img);
+  const q = Number.isFinite(exp.quality) ? exp.quality : 0.92;
+  const key = `${img.id}::${exp.format || 'png'}::${q}::${sig}`;
+  if (key !== lastPredictKey) {
+    schedulePredictEncode();
   }
 }
 
