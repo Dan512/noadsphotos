@@ -442,13 +442,24 @@ export const TRANSLATIONS = {
     bgRemoveErrGeneric:       'Background removal failed. See console for details.',
 
     // --- Importer ---------------------------------------------------------
-    importerRejectedType:     'Cannot import files of type "{type}". Supported: JPEG, PNG, WebP, GIF.',
+    importerRejectedType:     'Cannot import files of type "{type}". Supported: JPEG, PNG, WebP, GIF, HEIC.',
     importerDecodeFailed:     'Failed to decode "{name}".',
     importerThumbFailed:      'Failed to generate thumbnail for "{name}".',
     importerOversizeTitle:    'Image too large for this device',
     importerOversizeBody:     'The image {filename} is {width}×{height}px. This device supports images up to {max}×{max}px. Downscale to fit, or skip?',
     importerOversizeDownscale: 'Downscale',
     importerOversizeSkip:     'Skip',
+
+    // --- HEIC import (v1.1 Feature 5) -------------------------------------
+    // First-time consent modal + non-blocking decode toast + error messages.
+    heicConsentTitle:         'First-time HEIC import',
+    heicConsentBody:          'Importing HEIC requires a one-time download of a {size} decoder from this site. Your files still never leave your browser, and the decoder is cached after the first use.',
+    heicConsentContinue:      'Continue',
+    heicConsentCancel:        'Cancel',
+    heicConsentDeclined:      'HEIC import cancelled.',
+    heicLoading:              'Decoding HEIC — "{name}"…',
+    heicDecodeFailed:         'Could not decode {filename} (HEIC). Try saving it as JPEG and importing that instead.',
+    heicLoaderFailed:         'HEIC decoder failed to load. Refresh and try again, or convert the file to JPEG first.',
 
     // --- Toast messages ---------------------------------------------------
     toastDismiss:             'Dismiss',
@@ -495,7 +506,7 @@ export const TRANSLATIONS = {
     privacyTitle:             'Privacy',
     privacyLead:              'NoAdsPhotos processes images entirely in your browser. Image files never leave your device — there is no upload, no server-side rendering, and no cloud round-trip.',
     privacyFetchesHeading:    'What this site fetches (from this origin only)',
-    privacyFetchesList:       '<li>HTML, CSS, JavaScript, and self-hosted Onest fonts.</li><li>The JSZip library (~97&nbsp;KB) — ONLY when you click "Export queue (ZIP)" for the first time. Vendored from <a href="https://stuk.github.io/jszip/" target="_blank" rel="noopener">stuk.github.io/jszip</a>, served from this origin. Used to package your batch exports into a single ZIP locally — no network traffic.</li><li>The jsPDF library (~420&nbsp;KB) — ONLY when you click PDF export for the first time. Vendored from <a href="https://github.com/parallax/jsPDF" target="_blank" rel="noopener">github.com/parallax/jsPDF</a> (npm), served from this origin. Used to build PDF files from your images locally — no network traffic.</li><li>Self-hosted ML model files for background removal (the <a href="https://github.com/imgly/background-removal-js" target="_blank" rel="noopener">@imgly/background-removal</a> ISNET fp16 model + <a href="https://github.com/microsoft/onnxruntime" target="_blank" rel="noopener">ONNX Runtime Web</a> WASM kernels — both the CPU SIMD path and the WebGPU/JSEP path so the model can run on the GPU when available). These files (~118&nbsp;MB total) are part of the site code, shipped from this repository — they are NOT a separate first-use download from a third party. Your browser fetches them only the first time you click "Remove background", from this origin, and caches them thereafter. The browser pulls only the kernels it actually needs — CPU-only browsers never download the WebGPU variant, and vice versa.</li><li>The favicon and logo SVG.</li>',
+    privacyFetchesList:       '<li>HTML, CSS, JavaScript, and self-hosted Onest fonts.</li><li>The JSZip library (~97&nbsp;KB) — ONLY when you click "Export queue (ZIP)" for the first time. Vendored from <a href="https://stuk.github.io/jszip/" target="_blank" rel="noopener">stuk.github.io/jszip</a>, served from this origin. Used to package your batch exports into a single ZIP locally — no network traffic.</li><li>The jsPDF library (~420&nbsp;KB) — ONLY when you click PDF export for the first time. Vendored from <a href="https://github.com/parallax/jsPDF" target="_blank" rel="noopener">github.com/parallax/jsPDF</a> (npm), served from this origin. Used to build PDF files from your images locally — no network traffic.</li><li>The libheif HEIC/HEIF decoder (~1.1&nbsp;MB JavaScript + WebAssembly) — ONLY when you first import a <code>.heic</code> or <code>.heif</code> file. Vendored from <a href="https://github.com/catdad-experiments/libheif-js" target="_blank" rel="noopener">github.com/catdad-experiments/libheif-js</a> (which packages <a href="https://github.com/strukturag/libheif" target="_blank" rel="noopener">strukturag/libheif</a>), served from this origin. Cached by your browser thereafter.</li><li>Self-hosted ML model files for background removal (the <a href="https://github.com/imgly/background-removal-js" target="_blank" rel="noopener">@imgly/background-removal</a> ISNET fp16 model + <a href="https://github.com/microsoft/onnxruntime" target="_blank" rel="noopener">ONNX Runtime Web</a> WASM kernels — both the CPU SIMD path and the WebGPU/JSEP path so the model can run on the GPU when available). These files (~118&nbsp;MB total) are part of the site code, shipped from this repository — they are NOT a separate first-use download from a third party. Your browser fetches them only the first time you click "Remove background", from this origin, and caches them thereafter. The browser pulls only the kernels it actually needs — CPU-only browsers never download the WebGPU variant, and vice versa.</li><li>The favicon and logo SVG.</li>',
     privacyNotHeading:        'What this site does NOT do',
     privacyNotList:           '<li>No third-party CDNs (no Google Fonts, no jsDelivr, no cdnjs, no Cloudflare-served libraries).</li><li>No analytics or telemetry (no Google Analytics, Plausible, Fathom, Mixpanel, gtag, fbq, or similar).</li><li>No cookies. No fingerprinting. No localStorage data shared off-device.</li><li>No upload of your images, masks, or edits. No "save to cloud" feature exists.</li>',
     privacyExternalHeading:   'External links that open on click',

@@ -16,6 +16,7 @@ sends over the network. None of the libraries below have any network traffic.
 | ---------------------------------------------------- | ------- | -------------- | -------- | ------------------------------------- | --- |
 | [JSZip](https://stuk.github.io/jszip/)               | 3.10.1  | MIT or GPL-3.0 | **MIT**  | `js/vendor/jszip.min.js`              | Batch export ZIP archive (Phase 10) |
 | [jsPDF](https://github.com/parallax/jsPDF)           | 3.0.4   | MIT            | MIT      | `js/vendor/jspdf/jspdf.umd.min.js` (~419 KB) + `LICENSE` | Image-to-PDF export (v1.1 Feature 4) |
+| [libheif-js](https://github.com/catdad-experiments/libheif-js) | 1.19.8  | LGPL-3.0       | LGPL-3.0 | `js/vendor/heic/libheif.js` (~80 KB) + `libheif.wasm` (~1.0 MB) + `LICENSE`. Vendored 2026-05-20. | HEIC/HEIF input decoder (v1.1 Feature 5). Wraps [strukturag/libheif](https://github.com/strukturag/libheif). |
 | [Pica](https://github.com/nodeca/pica)               | _TBD_   | MIT            | MIT      | `js/vendor/pica.min.js` _(planned)_   | High-quality resampling for large resize / oversize import (a later phase) |
 | [@imgly/background-removal](https://github.com/imgly/background-removal-js) | 1.7.0   | AGPL-3.0      | AGPL-3.0 | `js/vendor/bgremove/index.mjs` (~170 KB) + chunked data assets (~95.4 MB across 26 hash-named binary files + `resources.json`). See [`js/vendor/bgremove/.notice`](js/vendor/bgremove/.notice). | Browser-side ML background removal (Phase 11) |
 | [@imgly/background-removal-data](https://github.com/imgly/background-removal-js) (data assets) | 1.7.0 (from `staticimgly.com`) | AGPL-3.0 | AGPL-3.0 | Co-located under `js/vendor/bgremove/` (resources.json + 26 binary chunks for the CPU-only `isnet_fp16` model + the `ort-wasm-simd-threaded` runtime). | ISNET fp16 segmentation model + ONNX Runtime Web SIMD WASM kernel (data half of the bg-removal feature). |
@@ -31,6 +32,16 @@ sends over the network. None of the libraries below have any network traffic.
   folder. We vendor the UMD build rather than the ES build because the ES
   build's bare imports (`fflate`, `fast-png`, `@babel/runtime/*`) would
   require additional vendoring.
+- **libheif-js** is **LGPL-3.0** (the wrapper) packaging upstream **libheif**
+  (also LGPL-3.0). LGPL is compatible with our AGPL-3.0 license — the LGPL
+  half is redistributed unmodified under LGPL terms (full text at
+  `js/vendor/heic/LICENSE`). We vendor the SPLIT wasm variant
+  (`libheif-wasm/libheif.js` + `libheif-wasm/libheif.wasm`) rather than the
+  pre-bundled `libheif-bundle.mjs` (which base64-inlines the WASM): the split
+  is ~30% smaller and lets the browser stream the native binary instead of
+  decoding a string at boot. The loader (`js/vendor/heic-loader.js`) sets
+  `locateFile` so the WASM resolves to the same vendored directory — no
+  third-party CDN at runtime.
 - **Pica** is plain MIT. Attribution preserved in the bundled header comment.
 - **@imgly/background-removal** is **AGPL-3.0** only. Vendoring this library
   is the reason the *entire* NoAdsPhotos project is licensed AGPL-3.0
@@ -41,10 +52,12 @@ sends over the network. None of the libraries below have any network traffic.
 
 ## Loading discipline
 
-- JSZip, jsPDF, and Pica are loaded **lazily** — the `<script>` (or dynamic
-  `import()`) is only fetched when the user takes the action that needs it
-  (Export queue ZIP / PDF export / oversize import respectively). Users who
-  never use those features never pay the bandwidth or CPU cost.
+- JSZip, jsPDF, libheif-js, and Pica are loaded **lazily** — the `<script>`
+  (or dynamic `import()`) is only fetched when the user takes the action
+  that needs it (Export queue ZIP / PDF export / first HEIC import / oversize
+  import respectively). Users who never use those features never pay the
+  bandwidth or CPU cost. libheif-js additionally goes through a one-time
+  consent modal on first use so the ~1.1 MB download is disclosed up front.
 - @imgly/background-removal is loaded **lazily** via dynamic `import()` of
   `js/vendor/bgremove/index.mjs` (~170 KB) on the first "Remove background"
   click. That import in turn triggers a chained dynamic
@@ -64,6 +77,7 @@ sends over the network. None of the libraries below have any network traffic.
 - `js/vendor/onnxruntime-web/` is ~400 KB.
 - `js/vendor/jszip.min.js` is ~97 KB.
 - `js/vendor/jspdf/` is ~420 KB (UMD bundle + LICENSE).
+- `js/vendor/heic/` is ~1.1 MB (80 KB JS + 1.0 MB WASM + 43 KB LICENSE).
 - The total `js/vendor/` footprint is ~97 MB, dominated by the chunked
   ML model + ORT WASM kernel. A `git clone` of this repo is consequently
   larger than a typical static-site repo. The trade is: zero deploy-time

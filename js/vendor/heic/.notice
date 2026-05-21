@@ -1,0 +1,61 @@
+# Vendored: libheif-js (1.19.8)
+
+## License
+
+This directory contains source code from `libheif-js`, an Emscripten build of
+`libheif` distributed as an npm module. Both the wrapper and the underlying
+`libheif` library are licensed under the **GNU Lesser General Public License
+v3.0** (LGPL-3.0). See `LICENSE` in this directory for the full license text.
+
+LGPL-3.0 is compatible with the project's AGPL-3.0 license (we redistribute the
+LGPL portion under LGPL terms; the AGPL applies to our own additions in
+`js/vendor/heic-loader.js`).
+
+## What's vendored here
+
+| File                  | Source                                                                | Purpose |
+| --------------------- | --------------------------------------------------------------------- | --- |
+| `libheif.js` (~80 KB) | `libheif-js@1.19.8` npm tarball, `libheif-wasm/libheif.js`            | Emscripten JS glue. Loaded as a UMD `<script>`, assigns the `libheif` factory to `window.libheif`. |
+| `libheif.wasm` (~1.0 MB) | `libheif-js@1.19.8` npm tarball, `libheif-wasm/libheif.wasm`     | The compiled `libheif` WebAssembly module. Fetched on demand by the JS glue (see `locateFile` in `js/vendor/heic-loader.js`). |
+| `LICENSE` (~43 KB)    | `libheif-js@1.19.8` npm tarball, `libheif/LICENSE`                    | Full LGPL-3.0 license text. |
+
+## Why the split WASM variant
+
+The upstream package ships three flavors:
+1. Pure JS asm.js (`libheif/libheif.js`, ~2.1 MB) — slow, fallback for ancient browsers.
+2. Pre-bundled WASM (`libheif-wasm/libheif-bundle.mjs`, ~1.46 MB) — base64-inlines the WASM, adds ~30% size and a boot-time decode hop.
+3. Split WASM (`libheif-wasm/libheif.js` + `libheif-wasm/libheif.wasm`, ~80 KB + ~1.0 MB) — what we use here.
+
+The split variant lets the browser stream native WebAssembly bytes instead of
+decoding a base64 string. The JS glue calls `locateFile('libheif.wasm')`
+exactly once during boot; the loader (`js/vendor/heic-loader.js`) overrides
+that callback to point at `/js/vendor/heic/libheif.wasm`. No third-party CDN
+at runtime — the WASM is served from this origin.
+
+## Loading discipline
+
+Lazy via dynamic `import()` of `js/vendor/heic-loader.js`, which itself injects
+the `<script>` tag for `libheif.js` only when the user attempts to import a
+HEIC/HEIF file for the first time. A first-use consent modal (`heic_consent`
+key in `localStorage`) discloses the ~1.1 MB download before the request goes
+out. The script + WASM are then cached by the browser like any other static
+asset.
+
+## Re-vendoring
+
+```bash
+# 1. Bump LIBHEIF_VERSION in scripts/install-heic.mjs.
+node scripts/install-heic.mjs
+# 2. Bump VENDOR_HASH in js/vendor/heic-loader.js so previously-consented
+#    users are re-prompted (the on-disk size may have changed).
+# 3. Update size lines in THIRD-PARTY.md, privacy.html, and the
+#    bgRemoveConsentBody / heicConsentBody i18n strings if the wasm grew.
+```
+
+## Brand-stance compliance
+
+At runtime, no third-party CDN is contacted. Every asset path lives under
+`/js/vendor/heic/`. This matches the "ad-free, tracker-free, self-hosted"
+stance and the privacy panel's disclosure. The 0-byte cost on initial page
+load is preserved because `js/vendor/heic-loader.js` lazy-imports the wasm
+only after the user opts in to a HEIC import.

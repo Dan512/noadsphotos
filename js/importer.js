@@ -3,9 +3,39 @@ import { addImage, createId, getActiveId, getQueue } from './queue.js';
 import { showToast } from './errors.js';
 import { escapeHtml } from './escape.js';
 import { t } from './i18n.js';
+import { loadHeicDecoder } from './vendor/heic-loader.js';
 
 const ACCEPTED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+// HEIC/HEIF go through the lazy libheif-js path (see vendor/heic-loader.js).
+// We accept by MIME (some OS/browsers set 'image/heic' or 'image/heif') AND
+// by .heic / .heif extension (some platforms leave the MIME blank).
+const HEIC_TYPES = ['image/heic', 'image/heif'];
+const HEIC_EXTENSIONS = ['.heic', '.heif'];
 const THUMB_MAX = 200;
+
+/**
+ * True if a file should be routed through the HEIC decode path.
+ * Exported for tests; consumed by importOne().
+ */
+export function isHeicFile(file) {
+  if (!file) return false;
+  const type = ((file.type || '') + '').toLowerCase();
+  if (HEIC_TYPES.includes(type)) return true;
+  const name = ((file.name || '') + '').toLowerCase();
+  return HEIC_EXTENSIONS.some(ext => name.endsWith(ext));
+}
+
+/**
+ * True if a file is an image NoAdsPhotos can ingest. Accepts the standard
+ * web formats (JPEG/PNG/WebP/GIF) by MIME, AND HEIC/HEIF by MIME-or-extension.
+ * Exported for unit tests.
+ */
+export function isAcceptedImageFile(file) {
+  if (!file) return false;
+  const type = ((file.type || '') + '').toLowerCase();
+  if (ACCEPTED_TYPES.includes(type)) return true;
+  return isHeicFile(file);
+}
 
 // Wire up document-level listeners and the hidden file <input>. Idempotent —
 // repeated calls are a no-op (guarded by a data attribute on body).
@@ -70,7 +100,10 @@ export function initImporter(caps, lifecycle) {
     fileInput.type = 'file';
     fileInput.id = 'noadsimages-file-input';
     fileInput.multiple = true;
-    fileInput.accept = 'image/*';
+    // `image/*` covers the modern web formats. iOS/Android browsers honor
+    // explicit `.heic`/`.heif` extensions; macOS/Linux/Windows fall back to
+    // the MIME hint. Listing both is belt-and-braces.
+    fileInput.accept = 'image/*,image/heic,image/heif,.heic,.heif';
     fileInput.hidden = true;
     document.body.appendChild(fileInput);
   }
@@ -106,7 +139,7 @@ export async function importFiles(fileList, caps, lifecycle) {
   const accepted = [];
   const rejectedTypes = new Set();
   for (const f of files) {
-    if (ACCEPTED_TYPES.includes(f.type)) {
+    if (isAcceptedImageFile(f)) {
       accepted.push(f);
     } else {
       rejectedTypes.add(f.type || 'unknown');
@@ -143,6 +176,19 @@ export async function importFiles(fileList, caps, lifecycle) {
 }
 
 async function importOne(file, caps) {
+  // HEIC/HEIF require the lazy libheif-js decoder. We replace `file` with a
+  // PNG-encoded blob of the decoded bitmap so the rest of the importer
+  // pipeline — and every downstream consumer of `source.blob` (lifecycle
+  // re-decode, predict-encode cache, EXIF strip check, thumbnail re-gen) —
+  // treats it as a standard PNG. This drops the original HEIC bytes from
+  // memory (typically ~5-15 MB per phone photo) in exchange for a clean
+  // pipeline downstream. Same trade as the oversize downscale path below.
+  if (isHeicFile(file)) {
+    const decoded = await decodeHeicFile(file);
+    if (!decoded) return false;
+    file = decoded;
+  }
+
   // Decode the source bitmap with EXIF orientation applied (modern browsers).
   let bitmap;
   try {
@@ -207,6 +253,101 @@ async function importOne(file, caps) {
 
   addImage(imageState);
   return true;
+}
+
+/**
+ * Decode a HEIC/HEIF File via the lazy libheif-js loader, then return a
+ * fresh PNG-backed File with the same name (extension swapped to `.png`).
+ * Returns null if the user cancelled consent, or if decode/load failed
+ * (an appropriate toast is already shown in that case).
+ *
+ * @param {File} file
+ * @returns {Promise<File|null>}
+ */
+async function decodeHeicFile(file) {
+  // Show a non-blocking "decoding…" toast so the user knows what's happening
+  // while the wasm streams in + decodes. HEIC decode of a 10 MB phone photo
+  // is typically 2-5 seconds; the user shouldn't wonder if the click registered.
+  // duration:0 makes the toast sticky — we explicitly dismiss it below.
+  const decodingToast = showToast(t('heicLoading', { name: file.name }), { variant: 'info', duration: 0 });
+  let loader;
+  try {
+    loader = await loadHeicDecoder();
+  } catch (err) {
+    dismissToast(decodingToast);
+    if (err && err.message === 'heic_consent_declined') {
+      showToast(t('heicConsentDeclined'), { variant: 'warn' });
+    } else {
+      // eslint-disable-next-line no-console
+      console.error('importer: HEIC loader failed', err);
+      showToast(t('heicLoaderFailed'), { variant: 'error' });
+    }
+    return null;
+  }
+  let imageData;
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    imageData = await loader.decode(arrayBuffer);
+  } catch (err) {
+    dismissToast(decodingToast);
+    // eslint-disable-next-line no-console
+    console.error('importer: HEIC decode failed', err);
+    showToast(t('heicDecodeFailed', { filename: file.name }), { variant: 'error' });
+    return null;
+  }
+
+  // imageData can be one of: {data, width, height} (ImageData-like), Blob, or
+  // ImageBitmap (when a test injects a fake decoder). Normalize to a PNG Blob.
+  let pngBlob;
+  try {
+    if (imageData instanceof Blob) {
+      pngBlob = imageData;
+    } else if (typeof ImageBitmap !== 'undefined' && imageData instanceof ImageBitmap) {
+      const c = createCanvas(imageData.width, imageData.height);
+      const ctx = c.getContext('2d');
+      ctx.drawImage(imageData, 0, 0);
+      pngBlob = await canvasToBlob(c, 'image/png', 1);
+    } else if (imageData && imageData.data && imageData.width && imageData.height) {
+      const c = createCanvas(imageData.width, imageData.height);
+      const ctx = c.getContext('2d');
+      // ImageData expects a Uint8ClampedArray; coerce if a plain Uint8Array
+      // sneaks in from a quirky decoder build.
+      const clampedData = imageData.data instanceof Uint8ClampedArray
+        ? imageData.data
+        : new Uint8ClampedArray(imageData.data);
+      const id = ctx.createImageData(imageData.width, imageData.height);
+      id.data.set(clampedData);
+      ctx.putImageData(id, 0, 0);
+      pngBlob = await canvasToBlob(c, 'image/png', 1);
+    } else {
+      throw new Error('heic_decoder_returned_unknown_shape');
+    }
+  } catch (err) {
+    dismissToast(decodingToast);
+    // eslint-disable-next-line no-console
+    console.error('importer: HEIC post-decode encode failed', err);
+    showToast(t('heicDecodeFailed', { filename: file.name }), { variant: 'error' });
+    return null;
+  }
+
+  dismissToast(decodingToast);
+  // Swap the .heic/.heif extension for .png in the displayed filename so the
+  // export panel's filename template defaults make sense.
+  const newName = file.name.replace(/\.(heic|heif)$/i, '.png') || `${file.name}.png`;
+  return new File([pngBlob], newName, { type: 'image/png' });
+}
+
+// Best-effort dismiss helper — showToast() returns a dismiss function (see
+// js/errors.js). Tolerate undefined and call shapes so future toast variants
+// don't break this path.
+function dismissToast(handle) {
+  if (typeof handle === 'function') {
+    try { handle(); } catch { /* ignore */ }
+    return;
+  }
+  if (handle && typeof handle.dismiss === 'function') {
+    try { handle.dismiss(); } catch { /* ignore */ }
+  }
 }
 
 // Downscale a bitmap so its long side equals maxSize. Returns the new
