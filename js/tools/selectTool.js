@@ -49,7 +49,7 @@ function renderPanel() {
   const root = document.createElement('div');
   root.className = 'select-tool-panel';
 
-  const heading = document.createElement('h3');
+  const heading = document.createElement('h2');
   heading.textContent = t('selectTransform');
   heading.className = 'panel-heading';
   root.appendChild(heading);
@@ -92,7 +92,7 @@ function renderPanel() {
   root.appendChild(readout);
 
   // Flip row -------------------------------------------------------------
-  const flipHeading = document.createElement('h3');
+  const flipHeading = document.createElement('h2');
   flipHeading.textContent = t('selectFlip');
   flipHeading.className = 'panel-heading';
   root.appendChild(flipHeading);

@@ -276,7 +276,10 @@ function buildPanel() {
   const root = document.createElement('div');
   root.className = 'text-tool-panel';
 
-  const heading = document.createElement('h3');
+  // h2 (not h3) per a11y heading-order: the editor view has a visually-hidden
+  // h1, and the next level should be h2. Class controls the visual size; the
+  // tag determines the AT outline level.
+  const heading = document.createElement('h2');
   heading.className = 'panel-heading';
   heading.textContent = t('textTitle');
   root.appendChild(heading);

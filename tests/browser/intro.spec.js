@@ -69,11 +69,14 @@ test('intro h1 text matches the EN string', async ({ page }) => {
     .toHaveText('Batch image editing in your browser.');
 });
 
-test('document has exactly one h1 (the intro title)', async ({ page }) => {
+test('document has exactly one visible h1 (the intro title)', async ({ page }) => {
   await resetApp(page);
-  // Topbar was demoted to <p class="wordmark"> so only the intro h1 should
-  // remain in the empty-queue state.
-  await expect(page.locator('h1')).toHaveCount(1);
+  // Topbar was demoted to <p class="wordmark"> so the intro h1 is the only
+  // VISIBLE h1 in the empty-queue state. The editor view also carries a
+  // visually-hidden <h1> (Phase 14: page-has-heading-one a11y rule) so AT
+  // users hear a landmark when they switch to the editor — that hidden
+  // heading must NOT count as a second visible h1.
+  await expect(page.locator('h1:visible')).toHaveCount(1);
 });
 
 test('feature list contains 5 items', async ({ page }) => {

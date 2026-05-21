@@ -242,6 +242,7 @@ function ensureIntro(root) {
       <li data-i18n="introFeatureRedact">${escapeHtml(t('introFeatureRedact'))}</li>
       <li data-i18n="introFeatureChromakey">${escapeHtml(t('introFeatureChromakey'))}</li>
       <li data-i18n="introFeatureExport">${escapeHtml(t('introFeatureExport'))}</li>
+      <li data-i18n="introFeatureHeic">${escapeHtml(t('introFeatureHeic'))}</li>
     </ul>
   `;
   // Prepend so the intro sits ABOVE the drop zone, regardless of order of

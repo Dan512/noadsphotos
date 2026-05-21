@@ -205,7 +205,6 @@ async function importOne(file, caps) {
       try { bitmap.close(); } catch { /* ignore */ }
       return false;
     }
-    // TODO(phase 14): pica resample for quality
     const scaled = await downscaleBitmap(bitmap, caps.maxCanvasSize);
     try { bitmap.close(); } catch { /* ignore */ }
     bitmap = scaled.bitmap;

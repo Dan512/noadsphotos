@@ -81,6 +81,9 @@ function buildPrivacyHtml() {
   // translator can rewrite the whole <li>…</li> block per locale. We don't
   // pass `vars` so no escaping happens (the keys themselves are trusted
   // copy authored by us).
+  // SAFETY: privacy*List keys contain author-controlled HTML inserted via
+  // innerHTML. Future translations must NOT interpolate user data and must
+  // be reviewed for unescaped tags.
   return `
     <h1>${t('privacyTitle')}</h1>
     <p class="lead">${t('privacyLead')}</p>

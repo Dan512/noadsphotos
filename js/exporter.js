@@ -738,18 +738,12 @@ export async function exportBatchPdf(opts = {}) {
 
 // Per-session flag so we only show the "blur won't bake" warning once.
 let blurWarningShown = false;
-let redactWarningShown = false;
 
 function warnIfNeeded(img, caps) {
   const adjustBlur = img.adjust && img.adjust.blur;
   if (!blurWarningShown && (!caps || !caps.ctxFilter) && adjustBlur && adjustBlur > 0) {
     showToast(t('exportNoCtxFilter'), { variant: 'warn' });
     blurWarningShown = true;
-  }
-  const hasRedact = Array.isArray(img.overlays) && img.overlays.some(o => o && o.type === 'redact');
-  if (!redactWarningShown && hasRedact) {
-    showToast(t('exportRedactNote'), { variant: 'info' });
-    redactWarningShown = true;
   }
 }
 
@@ -998,8 +992,8 @@ function openBatchProgressModal(ids, images) {
       // through the test harness as classnames; the visible labels go
       // through t() while preserving the detail suffix.
       switch (state) {
-        case 'encoding': label = 'encoding…'; break;
-        case 'done':     label = `ok${detail ? ' · ' + detail : ''}`; break;
+        case 'encoding': label = t('batchProgressEncodingExport'); break;
+        case 'done':     label = `${t('batchProgressOk')}${detail ? ' · ' + detail : ''}`; break;
         case 'failed':   label = `${t('batchProgressFailed')}${detail ? ' · ' + detail : ''}`; break;
         case 'skipped':  label = `${t('batchProgressSkipped')}${detail ? ' · ' + detail : ''}`; break;
         default:         label = state || t('batchProgressQueued');
@@ -1084,7 +1078,6 @@ export function _resetForTest() {
   ctxLifecycle = null;
   ctxCaps = null;
   blurWarningShown = false;
-  redactWarningShown = false;
   predictCache = null;
   lastExportedBlob = null;
   lastExportedFilename = null;

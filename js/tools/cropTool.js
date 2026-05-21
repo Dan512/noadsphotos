@@ -439,7 +439,7 @@ function renderToolPanel() {
   const root = document.createElement('div');
   root.className = 'crop-tool-panel';
 
-  const heading = document.createElement('h3');
+  const heading = document.createElement('h2');
   heading.textContent = t('cropTitle');
   heading.className = 'panel-heading';
   root.appendChild(heading);

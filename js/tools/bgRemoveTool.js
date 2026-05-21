@@ -60,7 +60,7 @@ function renderPanel() {
   const root = document.createElement('div');
   root.className = 'bg-remove-panel';
 
-  const heading = document.createElement('h3');
+  const heading = document.createElement('h2');
   heading.textContent = t('bgRemoveTitle');
   heading.className = 'panel-heading';
   root.appendChild(heading);

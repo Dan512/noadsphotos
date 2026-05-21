@@ -207,7 +207,7 @@ function renderPanel() {
   const root = document.createElement('div');
   root.className = 'brush-tool-panel';
 
-  const heading = document.createElement('h3');
+  const heading = document.createElement('h2');
   heading.className = 'panel-heading';
   heading.textContent = t('brushTitle');
   root.appendChild(heading);

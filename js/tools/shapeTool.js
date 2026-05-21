@@ -180,7 +180,7 @@ function renderPanel() {
   const root = document.createElement('div');
   root.className = 'shape-tool-panel';
 
-  const heading = document.createElement('h3');
+  const heading = document.createElement('h2');
   heading.className = 'panel-heading';
   heading.textContent = t('shapeTitle');
   root.appendChild(heading);

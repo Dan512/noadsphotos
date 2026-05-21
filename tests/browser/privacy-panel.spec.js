@@ -104,3 +104,58 @@ test('static privacy.html link inside the modal opens in a new tab', async ({ pa
   await expect(link).toHaveAttribute('rel', /noopener/);
   await expect(link).toHaveAttribute('href', '/privacy.html');
 });
+
+// --- Phase 14 audit additions ----------------------------------------------
+
+test('dialog lists every localStorage key by name', async ({ page }) => {
+  // Privacy invariant: every persisted key must be named in the disclosure.
+  // If we add or rename a key, this test forces an update to i18n.js too.
+  await boot(page);
+  await page.locator('#privacy-toggle').click();
+  const text = await page.locator('#privacy-panel').textContent();
+  expect(text).toContain('noadsimages_lang');
+  expect(text).toContain('noadsimages_settings');
+  expect(text).toContain('noadsimages_bgremove_consent');
+  expect(text).toContain('noadsimages_heic_consent');
+});
+
+test('dialog links to the GitHub source repository', async ({ page }) => {
+  await boot(page);
+  await page.locator('#privacy-toggle').click();
+  const link = page.locator('#privacy-panel a[href*="github.com/Dan512/noadsphotos"]');
+  await expect(link.first()).toBeVisible();
+});
+
+test('dialog mentions all v1.1 vendored libraries (jsPDF, libheif, JSZip, @imgly)', async ({ page }) => {
+  await boot(page);
+  await page.locator('#privacy-toggle').click();
+  const text = await page.locator('#privacy-panel').textContent();
+  expect(text.toLowerCase()).toContain('jszip');
+  expect(text.toLowerCase()).toContain('jspdf');
+  expect(text.toLowerCase()).toContain('libheif');
+  expect(text.toLowerCase()).toContain('@imgly/background-removal');
+  expect(text.toLowerCase()).toContain('onnx');
+});
+
+test('dialog includes the AI translation disclosure', async ({ page }) => {
+  await boot(page);
+  await page.locator('#privacy-toggle').click();
+  const text = await page.locator('#privacy-panel').textContent();
+  expect(text.toLowerCase()).toContain('ai');
+  expect(text.toLowerCase()).toContain('translat');
+});
+
+test('static privacy.html lists every localStorage key by name', async ({ page }) => {
+  await page.goto('/privacy.html');
+  const text = await page.locator('article.prose').textContent();
+  expect(text).toContain('noadsimages_lang');
+  expect(text).toContain('noadsimages_settings');
+  expect(text).toContain('noadsimages_bgremove_consent');
+  expect(text).toContain('noadsimages_heic_consent');
+});
+
+test('static privacy.html footer has the GitHub source link', async ({ page }) => {
+  await page.goto('/privacy.html');
+  const link = page.locator('footer a[href*="github.com/Dan512/noadsphotos"]');
+  await expect(link).toBeVisible();
+});

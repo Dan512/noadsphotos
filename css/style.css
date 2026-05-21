@@ -176,6 +176,23 @@ body {
   border-radius: 2px;
 }
 
+/* Visually-hidden utility — for headings and labels that exist only for AT.
+   Keeps the element in the accessibility tree (so axe + screen readers see it)
+   but pulls it out of the visual layout. The 1px clipped square pattern is
+   safer than `display: none` (which removes from a11y tree entirely). */
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  margin: -1px !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  clip-path: inset(50%) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
 /* --- Base layout (chrome only — components land in later phases) --- */
 
 header.topbar {

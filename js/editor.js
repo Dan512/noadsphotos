@@ -112,6 +112,15 @@ function syncHistoryButtons(stats) {
 }
 
 function buildShell() {
+  // Visually-hidden landmark heading so the editor view satisfies the
+  // page-has-heading-one a11y rule (the queue view's intro <h1> is removed
+  // when the user opens an image). Title content lives in the toolbar
+  // wordmark visually; this is for AT only.
+  const srHeading = document.createElement('h1');
+  srHeading.className = 'visually-hidden';
+  srHeading.id = 'editor-view-title';
+  srHeading.textContent = t('editorViewHeading');
+
   // Toolbar -----------------------------------------------------------------
   const toolbar = document.createElement('div');
   toolbar.className = 'editor-toolbar';
@@ -199,7 +208,9 @@ function buildShell() {
   progressOverlay.hidden = true;
   const progressCard = document.createElement('div');
   progressCard.className = 'canvas-progress-card';
-  const progressTitle = document.createElement('h3');
+  // h2 (not h3) per a11y heading-order: the editor view has a visually-hidden
+  // h1, and this progress card title is the next level in the outline.
+  const progressTitle = document.createElement('h2');
   progressTitle.className = 'canvas-progress-title';
   progressCard.appendChild(progressTitle);
   const progressBar = document.createElement('div');
@@ -294,7 +305,7 @@ function buildShell() {
   }
 
   // Mount -------------------------------------------------------------------
-  editorEl.replaceChildren(toolbar, frame, panel);
+  editorEl.replaceChildren(srHeading, toolbar, frame, panel);
 
   // Wire the Resize and Adjust panel inputs. Done once at build time because
   // the panel bodies own their DOM regardless of activeTool.
@@ -707,7 +718,7 @@ async function runEditorTrim(mode, tolerance, btnA, btnB) {
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error('Trim failed:', err);
-    showToast(t('trimEmpty'), { variant: 'error' });
+    showToast(t('trimRenderFailed'), { variant: 'error' });
   } finally {
     if (btnA) btnA.disabled = prevA;
     if (btnB) btnB.disabled = prevB;
