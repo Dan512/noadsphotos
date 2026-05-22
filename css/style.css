@@ -2459,6 +2459,97 @@ dialog.bgremove-consent-dialog p.bgremove-consent-license {
   border-color: var(--accent);
 }
 
+/* --- Face-detect / text-detect / HEIC consent dialogs ----
+   Share the visual language with bg-remove's consent — same disclosure
+   shape (download size + provenance + ML-runs-locally) deserves the same
+   chrome. Selectors are explicit (no nesting/groups) so a future tweak to
+   one doesn't accidentally touch the others. */
+dialog.face-consent-dialog,
+dialog.text-consent-dialog,
+dialog.heic-consent-dialog {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--space-xl);
+  max-width: 480px;
+  width: min(92vw, 480px);
+  font-family: inherit;
+}
+dialog.face-consent-dialog::backdrop,
+dialog.text-consent-dialog::backdrop,
+dialog.heic-consent-dialog::backdrop {
+  background: rgb(0 0 0 / 0.45);
+}
+dialog.face-consent-dialog h2,
+dialog.text-consent-dialog h2,
+dialog.heic-consent-dialog h2 {
+  margin: 0 0 var(--space-md);
+  font-size: var(--t-lg);
+  font-weight: 600;
+}
+dialog.face-consent-dialog p,
+dialog.text-consent-dialog p,
+dialog.heic-consent-dialog p {
+  margin: 0 0 var(--space-md);
+  color: var(--text-secondary);
+  font-size: var(--t-sm);
+  line-height: 1.5;
+}
+.face-consent-actions,
+.text-consent-actions,
+.heic-consent-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+}
+.face-consent-actions button,
+.text-consent-actions button,
+.heic-consent-actions button {
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-sm);
+  cursor: pointer;
+}
+.face-consent-actions button.btn-primary,
+.text-consent-actions button.btn-primary,
+.heic-consent-actions button.btn-primary {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+}
+
+/* "Auto-detect faces" / "Detect text" buttons inside the redact tool
+   panel. Quieter than the primary Apply button — they're side-actions,
+   not the main thing you're here to do. */
+.editor-panel .redact-detect-faces,
+.editor-panel .redact-detect-text {
+  display: block;
+  margin-top: var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-sm);
+  cursor: pointer;
+  width: 100%;
+}
+.editor-panel .redact-detect-faces:hover:not(:disabled),
+.editor-panel .redact-detect-text:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+.editor-panel .redact-detect-faces:disabled,
+.editor-panel .redact-detect-text:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
 /* --- Background-removal side panel --- */
 .bg-remove-panel {
   display: flex;

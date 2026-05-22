@@ -1,0 +1,75 @@
+Vendored MediaPipe Face Detection model — full-range BlazeFace, ONNX float
+========================================================================
+
+Used by `js/ops/faceDetect.js` for the "Detect faces" auto-redact feature
+(see docs/plans/2026-05-22-face-detect-design.md for the full design).
+
+Files
+-----
+
+- face_detector.onnx      — ONNX graph definition          (~78 KB)
+- face_detector.data      — external float weights         (~517 KB)
+- qualcomm-metadata.json  — input/output spec from Qualcomm (~3 KB)
+
+The ONNX file references the .data file via the standard external-data
+mechanism; ORT Web loads both transparently when they live in the same
+directory.
+
+Source
+------
+
+Direct re-distribution of the float ONNX export from Qualcomm's
+AI Hub Models repo:
+
+  https://huggingface.co/qualcomm/MediaPipe-Face-Detection
+  → release_assets.json points at:
+  https://qaihub-public-assets.s3.us-west-2.amazonaws.com/qai-hub-models/
+    models/mediapipe_face/releases/v0.54.0/mediapipe_face-onnx-float.zip
+
+The zip also bundles a face_landmark_detector — we DON'T vendor that one
+(we only need bboxes to draw redact rectangles; landmarks would be ~2.4 MB
+of dead weight).
+
+License
+-------
+
+Apache-2.0, by way of:
+
+  Qualcomm AI Hub Models
+    → repackaged from zmurez/MediaPipePyTorch
+    → originally exported from google/mediapipe
+
+See:
+  https://github.com/google/mediapipe/blob/master/LICENSE  (upstream)
+  https://github.com/zmurez/MediaPipePyTorch/blob/master/LICENSE
+  https://huggingface.co/qualcomm/MediaPipe-Face-Detection/raw/main/LICENSE
+
+Verification
+------------
+
+Pinned SHA-256 hashes (also enforced by scripts/install-blazeface.mjs):
+
+  face_detector.onnx
+    7455604fc33f56a5f90b9489ef0fc30d8d8921c23b03ac1c74b95c9a2eb47108
+
+  face_detector.data
+    990a8bec20de1515437cafdae3f5debbc6961ae3e2e6e9f78522853c036d618c
+
+If you re-vendor (e.g. to grab a newer Qualcomm release), update both the
+SHAs in this file AND the version string in install-blazeface.mjs.
+
+Model spec
+----------
+
+Input:
+  image           (1, 3, 256, 256)  float32, range [0, 1], RGB
+
+Outputs (full-range BlazeFace, 896 anchors total over two strides):
+  box_coords_1    (1, 512, 16)  — stride 16, 16×16 grid × 2 anchors/cell
+  box_coords_2    (1, 384, 16)  — stride 32,  8×8 grid × 6 anchors/cell
+  box_scores_1    (1, 512,  1)  — confidence logits per anchor
+  box_scores_2    (1, 384,  1)  — confidence logits per anchor
+
+Each row in box_coords is 16 floats: 4 bbox (cx_offset, cy_offset, w, h)
++ 12 landmark offsets (6 keypoints × 2). NMS is NOT baked in — see
+faceDetect.js for the decode + NMS pipeline.

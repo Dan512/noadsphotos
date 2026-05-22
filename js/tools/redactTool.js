@@ -25,6 +25,9 @@ import { setToolPanel, clearToolPanel } from '../editor.js';
 import { newRedactOverlay, drawRedact, REDACT_MODES } from '../ops/redact.js';
 import { addOverlay, getOverlay, updateOverlay } from '../overlays.js';
 import { withOverlaysHistory } from '../historyOps.js';
+import { detectFaces } from '../ops/faceDetect.js';
+import { detectText } from '../ops/textDetect.js';
+import { showToast } from '../errors.js';
 import { t } from '../i18n.js';
 import {
   canvasToSource,
@@ -284,6 +287,32 @@ function renderPanel() {
   colorRow.appendChild(colorInput);
   root.appendChild(colorRow);
 
+  // Auto-detect faces button (v1.2 Feature 1). Runs the vendored BlazeFace
+  // ONNX against the source bitmap, one mask redact overlay per detected
+  // face. Lazy-loaded model — first click prompts the one-time consent
+  // modal disclosing the ~600 KB download.
+  const detectFacesBtn = document.createElement('button');
+  detectFacesBtn.type = 'button';
+  detectFacesBtn.className = 'redact-detect-faces';
+  detectFacesBtn.textContent = t('redactDetectFaces');
+  detectFacesBtn.setAttribute('aria-label', t('redactDetectFaces'));
+  detectFacesBtn.addEventListener('click', () => onDetectFaces(detectFacesBtn));
+  root.appendChild(detectFacesBtn);
+
+  // Auto-detect text button (v1.2 Feature 4). Runs the vendored Tesseract.js
+  // OCR engine against the source bitmap, one mask redact overlay per
+  // detected text LINE (not word — line-level granularity matches the
+  // privacy redact use case). Lazy-loaded engine — first click prompts the
+  // one-time consent modal disclosing the ~6 MB download. Subsequent
+  // clicks reuse the worker.
+  const detectTextBtn = document.createElement('button');
+  detectTextBtn.type = 'button';
+  detectTextBtn.className = 'redact-detect-text';
+  detectTextBtn.textContent = t('redactDetectText');
+  detectTextBtn.setAttribute('aria-label', t('redactDetectText'));
+  detectTextBtn.addEventListener('click', () => onDetectText(detectTextBtn));
+  root.appendChild(detectTextBtn);
+
   // Apply button — "done editing this redact." Deselects so a subsequent
   // drag starts a fresh redact instead of editing the previous one.
   const actions = document.createElement('div');
@@ -357,6 +386,147 @@ function clampStrength(n) {
   if (n < MIN_STRENGTH) return MIN_STRENGTH;
   if (n > MAX_STRENGTH) return MAX_STRENGTH;
   return n;
+}
+
+// v1.2 Feature 1: run BlazeFace against the source bitmap and seed the
+// canvas with one mask-mode redact overlay per detected face. The model
+// + ORT session are lazy-loaded on first click (one-time ~600 KB
+// download, gated by a consent modal). Errors are non-fatal toasts so a
+// missing model file or a no-faces image doesn't break the editor.
+async function onDetectFaces(btn) {
+  const img = getActiveImage();
+  if (!img || !img.source) {
+    showToast(t('redactDetectNoImage'), { variant: 'warn' });
+    return;
+  }
+  const bitmap = img.source.bitmap;
+  if (!bitmap) {
+    showToast(t('redactDetectNoBitmap'), { variant: 'warn' });
+    return;
+  }
+  const prevLabel = btn.textContent;
+  const prevDisabled = btn.disabled;
+  btn.disabled = true;
+  btn.textContent = t('redactDetectRunning');
+  let rects;
+  try {
+    rects = await detectFaces(bitmap);
+  } catch (err) {
+    btn.disabled = prevDisabled;
+    btn.textContent = prevLabel;
+    if (err && err.message === 'face_consent_declined') {
+      // User cancelled the consent modal — nothing to do; no toast needed.
+      return;
+    }
+    // eslint-disable-next-line no-console
+    console.error('redactTool: detectFaces failed', err);
+    showToast(t('redactDetectFailed'), { variant: 'error' });
+    return;
+  }
+  btn.disabled = prevDisabled;
+  btn.textContent = prevLabel;
+
+  if (!rects || rects.length === 0) {
+    showToast(t('redactDetectNoFaces'), { variant: 'info' });
+    return;
+  }
+
+  // Add one redact overlay per detected face. All under a SINGLE history
+  // transaction so a Ctrl+Z reverts the whole batch in one step.
+  withOverlaysHistory(`Auto-redact ${rects.length} face${rects.length === 1 ? '' : 's'}`, img.id, state => {
+    const target = state.images[img.id];
+    if (!target) return;
+    for (const r of rects) {
+      if (r.w < 4 || r.h < 4) continue; // skip degenerate detections
+      const overlay = newRedactOverlay(r.x, r.y, r.w, r.h, {
+        mode: 'mask',
+        color: toolColor,
+      });
+      addOverlay(target, overlay);
+    }
+    // Deselect: the user just got N overlays at once, don't pin the
+    // selection to one of them.
+    state.ui.selectedOverlayId = null;
+  });
+
+  showToast(t('redactDetectSuccess', { count: rects.length }), { variant: 'info' });
+}
+
+// v1.2 Feature 4: run Tesseract.js OCR against the source bitmap and seed
+// the canvas with one mask-mode redact overlay per detected text LINE. The
+// engine + worker are lazy-loaded on first click (one-time ~6 MB download,
+// gated by a consent modal). Errors are non-fatal toasts so a missing model
+// file, an empty image, or worker init failure doesn't break the editor.
+//
+// v1.2 ship: auto-mask every detected line. The interactive preview-select
+// mode described in the design doc is deferred to v1.2.1 — users for now
+// can Ctrl+Z to revert the whole batch, or click an individual overlay and
+// press Delete to drop just that one.
+async function onDetectText(btn) {
+  const img = getActiveImage();
+  if (!img || !img.source) {
+    showToast(t('redactDetectNoImage'), { variant: 'warn' });
+    return;
+  }
+  const bitmap = img.source.bitmap;
+  if (!bitmap) {
+    showToast(t('redactDetectNoBitmap'), { variant: 'warn' });
+    return;
+  }
+  const prevLabel = btn.textContent;
+  const prevDisabled = btn.disabled;
+  btn.disabled = true;
+  btn.textContent = t('redactDetectRunning');
+
+  // Surface Tesseract's recognize-progress messages on the button label so
+  // users see progress during the multi-second OCR pass (especially on
+  // phones, where it can take 5–15 s on a busy screenshot).
+  const onProgress = (msg) => {
+    if (!msg || msg.status !== 'recognizing text') return;
+    const pct = Math.max(0, Math.min(100, Math.round((msg.progress || 0) * 100)));
+    btn.textContent = t('redactDetectTextProgress', { progress: pct });
+  };
+
+  let rects;
+  try {
+    rects = await detectText(bitmap, { progress: onProgress });
+  } catch (err) {
+    btn.disabled = prevDisabled;
+    btn.textContent = prevLabel;
+    if (err && err.message === 'text_consent_declined') {
+      // User cancelled the consent modal — nothing to do; no toast needed.
+      return;
+    }
+    // eslint-disable-next-line no-console
+    console.error('redactTool: detectText failed', err);
+    showToast(t('redactDetectTextFailed'), { variant: 'error' });
+    return;
+  }
+  btn.disabled = prevDisabled;
+  btn.textContent = prevLabel;
+
+  if (!rects || rects.length === 0) {
+    showToast(t('redactDetectTextNoText'), { variant: 'info' });
+    return;
+  }
+
+  // Add one redact overlay per detected text line. Single history
+  // transaction → Ctrl+Z reverts the whole batch.
+  withOverlaysHistory(`Auto-redact ${rects.length} text line${rects.length === 1 ? '' : 's'}`, img.id, state => {
+    const target = state.images[img.id];
+    if (!target) return;
+    for (const r of rects) {
+      if (r.w < 4 || r.h < 4) continue; // skip degenerate detections
+      const overlay = newRedactOverlay(r.x, r.y, r.w, r.h, {
+        mode: 'mask',
+        color: toolColor,
+      });
+      addOverlay(target, overlay);
+    }
+    state.ui.selectedOverlayId = null;
+  });
+
+  showToast(t('redactDetectTextSuccess', { count: rects.length }), { variant: 'info' });
 }
 
 // Test-only reset for browser specs.

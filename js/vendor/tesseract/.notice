@@ -1,0 +1,91 @@
+Vendored Tesseract.js OCR engine
+================================
+
+Used by `js/ops/textDetect.js` for the "Detect text" auto-redact feature in
+the redact tool (see docs/plans/2026-05-22-ocr-redact-design.md for the full
+design).
+
+Files
+-----
+
+- tesseract.min.js                                  — main library, UMD bundle (~63 KB)
+- worker.min.js                                     — web-worker harness    (~111 KB)
+- core/tesseract-core-lstm.wasm                     — LSTM-only WASM, no SIMD
+- core/tesseract-core-lstm.wasm.js                  — its loader
+- core/tesseract-core-simd-lstm.wasm                — LSTM-only WASM with SIMD
+- core/tesseract-core-simd-lstm.wasm.js             — its loader
+- core/tesseract-core-relaxedsimd-lstm.wasm         — LSTM-only WASM with relaxed-SIMD
+- core/tesseract-core-relaxedsimd-lstm.wasm.js      — its loader
+- lang/eng.traineddata.gz                           — English LSTM model (~1.9 MB gzipped)
+
+We DO NOT vendor the non-`-lstm` core variants — those bundle Tesseract's
+legacy integer-only OCR code paths in addition to the LSTM model and run
+~600 KB larger each. We never enter legacy mode (Tesseract 5+ uses LSTM by
+default; we expose only that).
+
+Runtime variant selection: Tesseract.js auto-detects WASM feature support
+and picks the fastest of the three vendored variants. Modern Chrome /
+Firefox / Safari get the `relaxedsimd` build; mid-range mobiles get `simd`;
+ancient browsers fall back to the plain variant. All three are single-
+threaded — no SharedArrayBuffer, no COOP/COEP requirement.
+
+Source
+------
+
+`tesseract.min.js` + `worker.min.js`:
+  https://www.npmjs.com/package/tesseract.js  (v7.0.0)
+  Tarball: https://registry.npmjs.org/tesseract.js/-/tesseract.js-7.0.0.tgz
+
+`core/*.wasm` + `core/*.wasm.js`:
+  https://www.npmjs.com/package/tesseract.js-core  (v7.0.0)
+  Tarball: https://registry.npmjs.org/tesseract.js-core/-/tesseract.js-core-7.0.0.tgz
+
+`lang/eng.traineddata.gz`:
+  Repo:   https://github.com/tesseract-ocr/tessdata_fast
+  Commit: 87416418657359cb625c412a48b6e1d6d41c29bd  (HEAD on 2024-08-01)
+  File:   eng.traineddata  (uncompressed; we gzip locally during vendor)
+
+License
+-------
+
+Apache-2.0 for all three:
+
+- Tesseract.js (Naptha):     https://github.com/naptha/tesseract.js/blob/master/LICENSE
+- tesseract.js-core:         https://github.com/naptha/tesseract.js-core/blob/master/LICENSE
+- tessdata_fast (model):     https://github.com/tesseract-ocr/tessdata_fast (per-repo Apache-2.0)
+
+Verification
+------------
+
+Pinned SHA-256 hashes are enforced by scripts/install-tesseract.mjs:
+
+  tesseract.min.js
+    000c27d9cd0def655f77b36c72a389c0ab13793aa31cb4d7aab56d09c0afbc7e
+
+  worker.min.js
+    576b7df7e3393e137e51849357c9adb53fe7ac1bb69bfa06cf3d61520f182c6d
+
+  lang/eng.traineddata.gz
+    b130d16b69e3888bc099133991a50a5b50e1da0e3ff6ca31a5496fab0fb386c3
+
+  core/tesseract-core-lstm.wasm
+    66b17df6e20c5329a17ffa9c202a47eaa3e32500b253d4c7f38e7f2bc01457c3
+
+  core/tesseract-core-lstm.wasm.js
+    eef5f8b2f8e20e150680b20adaec4a60babafee3adbe8a94583c81fee46e8680
+
+  core/tesseract-core-simd-lstm.wasm
+    34e8d50cac216427d86bf397d610fdd9f49492539bbcdfbfccc4eda20c810bea
+
+  core/tesseract-core-simd-lstm.wasm.js
+    c58b46a4c796c0b8afccf77591d5b875b6896b45d402bbce8caa6f5362447b38
+
+  core/tesseract-core-relaxedsimd-lstm.wasm
+    7985c92d4c64e7267d24cadffe1b2a1da6bf8aa55fdcaf953fe94fe122a24545
+
+  core/tesseract-core-relaxedsimd-lstm.wasm.js
+    861a536cf9ef8e63cb644d57bab39c388f37f7d6b6f60024b741c5f6b39a59b3
+
+If you re-vendor (newer Tesseract.js release, or a refreshed eng.traineddata),
+update both the SHAs in this file AND the version strings + PINNED
+dictionary in install-tesseract.mjs.
