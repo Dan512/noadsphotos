@@ -11,6 +11,7 @@ import { initPreviewRenderer } from './render/previewRenderer.js';
 import { initSelectTool } from './tools/selectTool.js';
 import { initPanTool } from './tools/panTool.js';
 import { initCropTool } from './tools/cropTool.js';
+import { initTransformTool } from './tools/transformTool.js';
 import { initEyedropperTool } from './tools/eyedropperTool.js';
 import { initTextTool } from './tools/textTool.js';
 import { initBrushTool } from './tools/brushTool.js';
@@ -68,6 +69,7 @@ async function boot() {
   initSelectTool();
   initPanTool();
   initCropTool();
+  initTransformTool();
   initEyedropperTool(lifecycle);
   initTextTool();
   initBrushTool();

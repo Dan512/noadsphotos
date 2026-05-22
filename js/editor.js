@@ -32,12 +32,12 @@ import {
   formatBytes,
   setPredictCache,
   getExportContext,
-  getLastExportedBlob,
 } from './exporter.js';
 import { renderForExport } from './render/exportRenderer.js';
 import { showToast } from './errors.js';
-import { t } from './i18n.js';
 import { hasMetadata } from './exif.js';
+import { escapeHtml } from './escape.js';
+import { t } from './i18n.js';
 
 // Tool list. Labels go through t() at render time; the i18n key is stored
 // alongside so render code can re-derive on language switch.
@@ -48,9 +48,10 @@ import { hasMetadata } from './exif.js';
 // zoomed-in, etc.). If `tipKey` is absent, the button's title falls back
 // to the short label.
 const TOOLS = [
-  { id: 'select',     icon: '↖', i18n: 'editorToolSelect' },
-  { id: 'pan',        icon: '✋', i18n: 'editorToolPan',        tipKey: 'editorToolPanTip' },
+  { id: 'select',     icon: '↖', i18n: 'editorToolSelect',    tipKey: 'editorToolSelectTip' },
+  { id: 'pan',        icon: '✋', i18n: 'editorToolPan',       tipKey: 'editorToolPanTip' },
   { id: 'crop',       icon: '▭', i18n: 'editorToolCrop' },
+  { id: 'transform',  icon: '↻', i18n: 'editorToolTransform', tipKey: 'editorToolTransformTip' },
   { id: 'text',       icon: 'T',      i18n: 'editorToolText' },
   { id: 'brush',      icon: '✎', i18n: 'editorToolBrush' },
   { id: 'shape',      icon: '◯', i18n: 'editorToolShape' },
@@ -99,6 +100,7 @@ let overlaysPanelBody = null;
 let exportPanelBody = null;
 let undoBtnEl = null;
 let redoBtnEl = null;
+let compareBtnEl = null;
 let initialized = false;
 
 export function initEditor() {
@@ -131,10 +133,14 @@ function buildShell() {
 
   // Toolbar -----------------------------------------------------------------
   //
-  // Layout: [← Queue] | [tool buttons] ... spacer ... [Undo] [Redo]
-  // The ← Queue sits at the far left (browser back-button convention).
-  // Undo/Redo are pushed to the far right by a flex spacer between them
-  // and the tool buttons.
+  // Layout: [← Queue] | [tool buttons] | [Undo] [Redo]
+  //
+  // v1.1.2: Undo/Redo grouped with the tool buttons on the left (was
+  // pushed to the far-right edge of the toolbar via a flex spacer in
+  // v1.1.1; that left too much empty space on wide screens and visually
+  // disconnected history from the editing controls).
+  // A short divider sits between the tools and the history pair so they
+  // still feel like distinct groups without being light-years apart.
   const toolbar = document.createElement('div');
   toolbar.className = 'editor-toolbar';
 
@@ -173,9 +179,27 @@ function buildShell() {
     toolBtns.set(tool.id, btn);
   }
 
-  const spacer = document.createElement('div');
-  spacer.className = 'spacer';
-  toolbar.appendChild(spacer);
+  const historyDivider = document.createElement('span');
+  historyDivider.className = 'divider';
+  historyDivider.setAttribute('aria-hidden', 'true');
+  toolbar.appendChild(historyDivider);
+
+  // Compare-with-original toggle (v1.2). Splits the canvas into two halves
+  // showing the source bitmap on the left vs. the current edit on the right,
+  // so the user can A/B their work at a glance. Doesn't change a "tool" —
+  // it's a view mode — so it sits next to Undo/Redo rather than in the
+  // tool buttons cluster.
+  const compareBtn = document.createElement('button');
+  compareBtn.type = 'button';
+  compareBtn.id = 'compare-toggle';
+  compareBtn.setAttribute('aria-label', t('compareToggle'));
+  compareBtn.title = t('compareToggleTip');
+  compareBtn.textContent = '◑';
+  compareBtn.addEventListener('click', () => {
+    update(s => { s.ui.compareMode = !s.ui.compareMode; });
+  });
+  toolbar.appendChild(compareBtn);
+  compareBtnEl = compareBtn;
 
   const undoBtn = document.createElement('button');
   undoBtn.type = 'button';
@@ -388,6 +412,12 @@ function render() {
     for (const [id, btn] of toolBtns) {
       btn.classList.toggle('is-active', id === active);
     }
+  }
+
+  // Compare-with-original toggle indicator.
+  if (compareBtnEl) {
+    compareBtnEl.classList.toggle('is-active', !!s.ui.compareMode);
+    compareBtnEl.setAttribute('aria-pressed', s.ui.compareMode ? 'true' : 'false');
   }
 
   // Zoom display.
@@ -1668,44 +1698,57 @@ function buildExportPanel() {
   downloadBtn.addEventListener('click', onDownload);
   root.appendChild(downloadBtn);
 
-  // --- EXIF / GPS strip disclosure -----------------------------------------
-  // Always-on guarantee: every export is re-encoded through Canvas, which
-  // drops EXIF, XMP, and GPS metadata as a natural side-effect. The badge
-  // and Verify button make that guarantee INSPECTABLE — pressing the button
-  // reads the last exported blob's bytes and toasts what was (or wasn't)
-  // found. No setting toggle on purpose: a toggle whose two states behaved
-  // identically would be deceptive.
-  const exifRow = document.createElement('div');
-  exifRow.className = 'exif-status';
-  // The check glyph reads as "stripped" on its own; the text label conveys
-  // the same meaning for assistive tech / colorblind users.
-  const exifBadge = document.createElement('span');
-  exifBadge.className = 'exif-badge';
-  // Plain ASCII check so it renders identically across fonts/locales.
-  // Color is set via CSS — the icon also has a "stripped" textContent label
-  // adjacent so Dan and other colorblind users don't have to parse a color.
-  exifBadge.textContent = '✓';
-  exifBadge.setAttribute('aria-hidden', 'true');
-  exifRow.appendChild(exifBadge);
-  const exifLabel = document.createElement('span');
-  exifLabel.className = 'exif-label';
-  exifLabel.textContent = t('exifStripped');
-  exifLabel.setAttribute('title', t('exifTooltip'));
-  exifRow.appendChild(exifLabel);
-  const exifVerifyBtn = document.createElement('button');
-  exifVerifyBtn.type = 'button';
-  exifVerifyBtn.className = 'exif-verify-btn';
-  exifVerifyBtn.textContent = t('exifVerify');
-  exifVerifyBtn.setAttribute('aria-label', t('exifVerify'));
-  exifVerifyBtn.addEventListener('click', onVerifyExif);
-  exifRow.appendChild(exifVerifyBtn);
-  root.appendChild(exifRow);
+  // --- Metadata toggle ----------------------------------------------------
+  // v1.1.2: opt-in metadata preservation. Default is "strip" (Canvas
+  // re-encoding drops EXIF/XMP/GPS as a side-effect, matching the privacy-
+  // forward stance the site is built on). Users who explicitly WANT to
+  // keep GPS / camera info on family JPEGs can uncheck this box. When
+  // unchecked AND source + output are both JPEG, the exporter splices the
+  // source's APP1/Exif segment back into the Canvas-encoded blob (see
+  // exporter.js#maybePreserveExif). For other combinations (PNG output,
+  // HEIC source, etc.) the export still strips and we show a small hint.
+  const stripRow = document.createElement('label');
+  stripRow.className = 'exif-status';
+  const stripInput = document.createElement('input');
+  stripInput.type = 'checkbox';
+  stripInput.className = 'strip-metadata';
+  stripInput.checked = true;
+  stripInput.addEventListener('change', () => {
+    update(s => { s.export.stripMetadata = !!stripInput.checked; });
+  });
+  stripRow.appendChild(stripInput);
+  const stripLabel = document.createElement('span');
+  stripLabel.className = 'exif-label';
+  stripLabel.textContent = t('stripMetadataLabel');
+  stripLabel.setAttribute('title', t('exifTooltip'));
+  stripRow.appendChild(stripLabel);
+  root.appendChild(stripRow);
+
+  // "View source metadata" button (v1.2). Opens a modal that lists the
+  // EXIF/XMP/GPS blocks found in the source blob + whether each will be
+  // stripped or kept based on the toggle above. Pure read-only audit —
+  // the modal doesn't mutate state.
+  const viewMetadataBtn = document.createElement('button');
+  viewMetadataBtn.type = 'button';
+  viewMetadataBtn.className = 'view-metadata-btn';
+  viewMetadataBtn.textContent = t('viewMetadataBtn');
+  viewMetadataBtn.setAttribute('aria-label', t('viewMetadataBtn'));
+  viewMetadataBtn.addEventListener('click', onViewMetadata);
+  root.appendChild(viewMetadataBtn);
+
+  // Hint that appears when stripping is OFF — explains the JPEG-only
+  // limitation honestly.
+  const stripHint = document.createElement('p');
+  stripHint.className = 'strip-metadata-hint';
+  stripHint.textContent = t('stripMetadataHint');
+  stripHint.hidden = true;
+  root.appendChild(stripHint);
 
   exportPanelBody.replaceChildren(root);
   exportEls = {
     root, formatBtns, smallestBtn, qualityRow, qualityInput, qualityReadout,
     filenameInput, filenameHelp, dimsReadout, predictedReadout, downloadBtn,
-    exifRow, exifBadge, exifLabel, exifVerifyBtn,
+    stripRow, stripInput, stripLabel, stripHint,
     // PDF options
     pdfOptsRow, pdfPageSizeSel, pdfOrientSel, pdfMarginInput, pdfFitSel, pdfFitLabel,
   };
@@ -1785,36 +1828,130 @@ function onDownload() {
   });
 }
 
-// Inspect the last-exported Blob for leaked EXIF / XMP / GPS metadata. Toasts
-// either "no metadata found" (the expected privacy guarantee) or, if a
-// future regression is introduced, the list of tags that were detected.
-async function onVerifyExif() {
-  const last = getLastExportedBlob();
-  if (!last || !last.blob) {
-    showToast(t('exifVerifyNoExport'), { variant: 'info' });
+// (Pre-v1.1.2 this file housed onVerifyExif — a "Verify last export"
+// button that inspected the most recent export for leaked EXIF/XMP/GPS
+// and toasted the result. We removed it because the framing made the
+// site appear to retain export bytes after the user had downloaded them,
+// which read as a privacy contradiction. The privacy claim is now stated
+// in the privacy panel + verifiable in DevTools → Network rather than
+// surfaced as a one-click "verify what you just downloaded" affordance.)
+
+// v1.2 Feature 2: source-metadata audit modal. Opens a <dialog> listing
+// the EXIF / XMP / GPS blocks found in the source blob + per-tag indicator
+// for "Will be stripped on export" / "Will be kept". Read-only — the modal
+// does NOT mutate state; the user controls the strip toggle separately.
+//
+// We only show CATEGORIES (EXIF / XMP / GPS) here, not individual decoded
+// tag values. Decoding TIFF entries to human-readable values (camera Make,
+// GPSLatitude, etc.) is multi-day work for a full IFD walker; the v1.2
+// minimum is the privacy-audit story ("this image has GPS — here's what
+// will happen to it on export"). A richer "view by tag name" UI can land
+// as a v1.3 follow-up if anyone asks.
+async function onViewMetadata() {
+  const img = getActiveImage();
+  if (!img || !img.source || !img.source.blob) {
+    showToast(t('exportNoImage'), { variant: 'warn' });
     return;
   }
-  let result;
+  let report;
   try {
-    result = await hasMetadata(last.blob);
+    report = await hasMetadata(img.source.blob);
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.error('onVerifyExif:', err);
+    console.error('onViewMetadata: hasMetadata failed', err);
     showToast(t('exportGenericFailed'), { variant: 'error' });
     return;
   }
-  if (!result.exif && !result.xmp && !result.gps) {
-    showToast(t('exifVerifyClean'), { variant: 'info' });
-    return;
+  openMetadataDialog(report);
+}
+
+function openMetadataDialog(report) {
+  // Reuse-or-create a dialog. We don't cache across calls — each open
+  // rebuilds the content so the report always reflects the current image
+  // and the latest strip setting.
+  const existing = document.getElementById('metadata-audit-dialog');
+  if (existing) try { existing.close(); existing.remove(); } catch { /* ignore */ }
+
+  const dialog = document.createElement('dialog');
+  dialog.id = 'metadata-audit-dialog';
+  dialog.className = 'metadata-audit-dialog';
+  dialog.setAttribute('aria-label', t('viewMetadataTitle'));
+
+  const stripActive = (getState().export || {}).stripMetadata !== false;
+  const actionWord = stripActive ? t('metadataActionStripped') : t('metadataActionKept');
+
+  // Build the audit row list. Each "category" present in the report gets a
+  // row; tags array is shown as a small detail list under each.
+  const rows = [];
+  if (report.format && report.format !== 'unknown') {
+    rows.push({ key: t('metadataFormat'), value: report.format.toUpperCase(), action: null });
   }
-  // Anything in the tags list is a real surprise — privacy regression.
-  // Surface the tag names so the user (and the bug tracker) can see what
-  // leaked. Variant: warn rather than error so the toast styling matches
-  // the "heads up" intent rather than implying a hard failure.
-  const tagsList = (result.tags && result.tags.length)
-    ? result.tags.join(', ')
-    : 'unknown';
-  showToast(t('exifVerifyFound', { tags: tagsList }), { variant: 'warn' });
+  if (report.exif) {
+    rows.push({ key: t('metadataExifFound'), value: t('metadataExifFoundDesc'), action: actionWord });
+  }
+  if (report.gps) {
+    // GPS is the most privacy-sensitive — make it visually distinct via
+    // a class on the row.
+    rows.push({ key: t('metadataGpsFound'), value: t('metadataGpsFoundDesc'), action: actionWord, severity: 'high' });
+  }
+  if (report.xmp) {
+    rows.push({ key: t('metadataXmpFound'), value: t('metadataXmpFoundDesc'), action: actionWord });
+  }
+  if (report.tags && report.tags.length > 0) {
+    rows.push({ key: t('metadataRawTags'), value: report.tags.join(', '), action: null });
+  }
+  if (rows.length === 1 && rows[0].key === t('metadataFormat')) {
+    // Only the format row — no actual metadata.
+    rows.push({ key: t('metadataNoneFound'), value: t('metadataNoneFoundDesc'), action: null });
+  }
+
+  // Render the dialog. Content is built from i18n-safe strings + the
+  // report's tag names (which come from our own parser, never from user
+  // input), so innerHTML is safe to use for the structured layout.
+  const headerHtml = `
+    <header class="metadata-audit-header">
+      <h2>${escapeHtml(t('viewMetadataTitle'))}</h2>
+      <button type="button" class="dialog-close" data-close aria-label="${escapeHtml(t('close'))}">×</button>
+    </header>
+    <p class="metadata-audit-lead">${escapeHtml(t('viewMetadataLead'))}</p>
+  `;
+  const rowsHtml = rows.map(r => `
+    <tr${r.severity === 'high' ? ' class="severity-high"' : ''}>
+      <th>${escapeHtml(r.key)}</th>
+      <td>${escapeHtml(r.value)}</td>
+      <td class="metadata-action">${r.action ? escapeHtml(r.action) : ''}</td>
+    </tr>
+  `).join('');
+  const tableHtml = `
+    <table class="metadata-audit-table">
+      <thead>
+        <tr>
+          <th>${escapeHtml(t('metadataField'))}</th>
+          <th>${escapeHtml(t('metadataValue'))}</th>
+          <th>${escapeHtml(t('metadataOnExport'))}</th>
+        </tr>
+      </thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
+  `;
+  const footerHtml = `
+    <footer class="metadata-audit-footer">
+      <p class="metadata-audit-footnote">${escapeHtml(t('viewMetadataFootnote'))}</p>
+    </footer>
+  `;
+  dialog.innerHTML = headerHtml + tableHtml + footerHtml;
+  document.body.appendChild(dialog);
+
+  // Close on backdrop or × click.
+  dialog.addEventListener('click', (e) => {
+    if (e.target.matches('[data-close]')) { dialog.close(); return; }
+    if (e.target === dialog) dialog.close();
+  });
+  dialog.addEventListener('close', () => {
+    try { dialog.remove(); } catch { /* ignore */ }
+  });
+  try { dialog.showModal(); }
+  catch { dialog.setAttribute('open', ''); }
 }
 
 // "Smallest size" preset: run the format-comparison sweep, pick the winner,
@@ -1978,6 +2115,22 @@ function syncExportPanel() {
   const exp = s.export || { format: 'png', quality: 0.92, filenameTemplate: '{base}-edited' };
   const pdfOpts = exp.pdf || { pageSize: 'fit', orientation: 'auto', margins: undefined, fitMode: 'contain' };
   const isPdf = exp.format === 'pdf';
+
+  // Strip-metadata checkbox: sync from state and toggle the hint visibility
+  // when the user opts out of stripping. The hint explains the JPEG-only
+  // limitation so the user isn't surprised that picking PNG and unchecking
+  // the box doesn't actually preserve metadata.
+  if (exportEls.stripInput) {
+    const strip = exp.stripMetadata !== false;
+    if (document.activeElement !== exportEls.stripInput) {
+      exportEls.stripInput.checked = strip;
+    }
+    if (exportEls.stripHint) {
+      // Show the hint only when the user has opted to keep metadata. (When
+      // strip is on, there's nothing to clarify.)
+      exportEls.stripHint.hidden = strip;
+    }
+  }
 
   // Active format chip.
   for (const [id, btn] of exportEls.formatBtns) {
@@ -2251,6 +2404,27 @@ function labelFor(overlay, fallback) {
     const text = String(overlay.text || '').replace(/\s+/g, ' ').trim();
     if (text.length === 0) return t('overlayEmptyText');
     return text.length > 24 ? text.slice(0, 24) + '…' : text;
+  }
+  // v1.1.2: shapes and redacts get more specific labels so the user can
+  // tell them apart at a glance — "Circle" and "Arrow" instead of two
+  // identical "Shape" rows; "Blur redact" vs "Pixelate redact" instead
+  // of two "Redact" rows. Falls back to the generic type label for
+  // overlay kinds we don't have specific keys for.
+  if (overlay.type === 'shape') {
+    const kindKey = {
+      circle: 'shapeKindCircle',
+      rect:   'shapeKindRect',
+      line:   'shapeKindLine',
+      arrow:  'shapeKindArrow',
+    }[overlay.kind];
+    if (kindKey) return t(kindKey);
+  }
+  if (overlay.type === 'redact') {
+    const modeKey = {
+      blur:     'redactModeBlur',
+      pixelate: 'redactModePixelate',
+    }[overlay.mode];
+    if (modeKey) return `${t(modeKey)} ${fallback.toLowerCase()}`;
   }
   return fallback;
 }

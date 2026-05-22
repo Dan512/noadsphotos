@@ -519,7 +519,70 @@ export function initPreviewRenderer(lifecycle, caps) {
     // because upsizing doesn't add pixelation.
     applyResizePixelation(img, ds);
 
+    // Compare-with-original split (v1.2). If ui.compareMode is on, overpaint
+    // the LEFT half of the canvas with the raw source bitmap (no transforms,
+    // no adjustments, no overlays) so the user can A/B their edits against
+    // the original. The split position is ui.compareSplit ∈ [0, 1] — for now
+    // we ship a fixed 50/50 with a draggable divider as a follow-up if
+    // anyone asks.
+    applyCompareSplit(img, ds);
+
     return true;
+  }
+
+  // Draw the raw source bitmap into the left portion of the base canvas
+  // (clipped at `ui.compareSplit`) plus a thin vertical divider line. Runs
+  // AFTER drawBase + applyRedactsToBase + applyResizePixelation, so what
+  // gets covered is the fully-edited render — the user sees original on
+  // the left, every-edit-applied on the right, and the seam between them.
+  function applyCompareSplit(img, ds) {
+    if (!baseCtx || !ds) return;
+    const s = getState();
+    if (!s.ui || !s.ui.compareMode) return;
+    const split = Math.max(0, Math.min(1, Number.isFinite(s.ui.compareSplit) ? s.ui.compareSplit : 0.5));
+    const splitX = Math.round(ds.canvasW * split);
+    if (splitX <= 0) return; // nothing to overdraw
+
+    const bitmap = img.source.bitmap;
+    if (!bitmap) return;
+    const src = ds.srcX != null
+      ? { x: 0, y: 0, w: bitmap.width, h: bitmap.height }
+      : { x: 0, y: 0, w: bitmap.width, h: bitmap.height };
+
+    baseCtx.save();
+    // Clip to the LEFT region only — leaves the right half untouched
+    // (which is still the fully-edited render).
+    baseCtx.setTransform(1, 0, 0, 1, 0, 0);
+    baseCtx.beginPath();
+    baseCtx.rect(0, 0, splitX, ds.canvasH);
+    baseCtx.clip();
+    baseCtx.clearRect(0, 0, splitX, ds.canvasH);
+
+    // Draw the source bitmap centered + scaled to match the canvas (so the
+    // original and the edit align spatially — same crop/zoom). We ignore
+    // crop/rotate/flip on the LEFT side: the whole point is to see the
+    // unmodified original.
+    const fit = Math.min(ds.canvasW / src.w, ds.canvasH / src.h);
+    const drawW = src.w * fit;
+    const drawH = src.h * fit;
+    baseCtx.imageSmoothingEnabled = true;
+    baseCtx.imageSmoothingQuality = 'high';
+    baseCtx.drawImage(
+      bitmap,
+      src.x, src.y, src.w, src.h,
+      (ds.canvasW - drawW) / 2, (ds.canvasH - drawH) / 2, drawW, drawH,
+    );
+    baseCtx.restore();
+
+    // Divider line + small "Original | Edited" label.
+    baseCtx.save();
+    baseCtx.setTransform(1, 0, 0, 1, 0, 0);
+    baseCtx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+    baseCtx.fillRect(splitX - 1, 0, 2, ds.canvasH);
+    baseCtx.strokeStyle = 'rgba(0, 0, 0, 0.5)';
+    baseCtx.lineWidth = 1;
+    baseCtx.strokeRect(splitX - 1, 0, 2, ds.canvasH);
+    baseCtx.restore();
   }
 
   // Scratch offscreen canvas for the resize-pixelation pass. Reused across
@@ -888,6 +951,8 @@ export function initPreviewRenderer(lifecycle, caps) {
   let lastSelectedId = null;
   let lastOverlayOutlines = null;
   let lastSmoothBrush = null;
+  let lastCompareMode = false;
+  let lastCompareSplit = 0.5;
   subscribe(() => {
     const s = getState();
     if (s.ui.view === 'editor') {
@@ -910,6 +975,16 @@ export function initPreviewRenderer(lifecycle, caps) {
         if (smooth !== lastSmoothBrush) {
           lastSmoothBrush = smooth;
           s.images[id].overlaysDirty = true;
+        }
+        // v1.2 compare-with-original: any change to compareMode or
+        // compareSplit needs a base re-bake (the split is painted INTO
+        // the base canvas, not on a separate layer).
+        const cm = !!s.ui.compareMode;
+        const cs = Number.isFinite(s.ui.compareSplit) ? s.ui.compareSplit : 0.5;
+        if (cm !== lastCompareMode || cs !== lastCompareSplit) {
+          lastCompareMode = cm;
+          lastCompareSplit = cs;
+          s.images[id].baseDirty = true;
         }
       }
     }

@@ -22,14 +22,13 @@ import {
   withBatchAdjust,
   withBatchChromakey,
 } from './historyOps.js';
-import { recordTransaction, pickKeys } from './history.js';
+import { recordTransaction, pickKeys, subscribeHistory, getLastChange, undo, redo, getHistoryStats } from './history.js';
 import {
   exportBatch,
   exportEachIndividually,
   exportBatchPdf,
   pickSmallestFormat,
   formatBytes,
-  getLastExportedBlob,
 } from './exporter.js';
 import { renderForExport } from './render/exportRenderer.js';
 import { showToast } from './errors.js';
@@ -37,7 +36,6 @@ import { applyBgRemoveBatch } from './ops/bgremove.js';
 import { t } from './i18n.js';
 import { getSetting } from './settings.js';
 import { renderThumbnail } from './render/exportRenderer.js';
-import { hasMetadata } from './exif.js';
 
 // Track per-thumb DOM nodes and their object URLs so we can diff-render
 // without rebuilding the grid on every state change.
@@ -49,10 +47,34 @@ let panelEl = null;
 let panelRefs = null;   // refs to inputs inside the batch panel
 let panelSubscribed = false;
 let exportPanelSubsBound = false;
+// History buttons live at the top of the batch panel (v1.1.2). Refs are set
+// by buildBatchPanel() and used by the subscribeHistory callback in
+// initQueueView() to toggle disabled state.
+let batchUndoBtn = null;
+let batchRedoBtn = null;
 
 export function initQueueView() {
   render(getState());
   subscribe(render);
+  // v1.1.2: single history subscriber that does two things:
+  //   1. Refresh queue thumbnails on undo/redo so the grid reflects the
+  //      reverted state. (Batch-op handlers refresh inline after their
+  //      own ops, but undo()/redo() bypass those handlers.)
+  //   2. Sync the batch panel's Undo/Redo button enabled state from the
+  //      past/future counts (mirrors the editor toolbar's history buttons).
+  subscribeHistory(stats => {
+    syncBatchHistoryButtons(stats);
+    const change = getLastChange();
+    if (!change) return;
+    if (change.kind !== 'undo' && change.kind !== 'redo') return;
+    if (!Array.isArray(change.ids) || change.ids.length === 0) return;
+    maybeRefreshThumbs(change.ids);
+  });
+}
+
+function syncBatchHistoryButtons(stats) {
+  if (batchUndoBtn) batchUndoBtn.disabled = !stats || stats.pastCount === 0;
+  if (batchRedoBtn) batchRedoBtn.disabled = !stats || stats.futureCount === 0;
 }
 
 // --------------------------------------------------------------------------
@@ -449,6 +471,39 @@ function buildBatchPanel() {
   heading.textContent = t('batchApplyToAll');
   panel.appendChild(heading);
 
+  // History buttons. Visible Undo/Redo right under the heading so users on
+  // the queue view aren't forced to remember Ctrl+Z to revert a batch op.
+  // Wired to the same history.undo()/redo() the editor toolbar uses.
+  // Initial disabled state is read from getHistoryStats(); thereafter the
+  // subscribeHistory() callback in initQueueView() keeps them in sync.
+  const historyRow = document.createElement('div');
+  historyRow.className = 'batch-history';
+
+  const undoBtn = document.createElement('button');
+  undoBtn.type = 'button';
+  undoBtn.className = 'batch-undo';
+  undoBtn.setAttribute('aria-label', t('editorUndo'));
+  undoBtn.title = t('editorUndo');
+  undoBtn.textContent = '↶';
+  undoBtn.addEventListener('click', () => { undo(); });
+  historyRow.appendChild(undoBtn);
+
+  const redoBtn = document.createElement('button');
+  redoBtn.type = 'button';
+  redoBtn.className = 'batch-redo';
+  redoBtn.setAttribute('aria-label', t('editorRedo'));
+  redoBtn.title = t('editorRedo');
+  redoBtn.textContent = '↷';
+  redoBtn.addEventListener('click', () => { redo(); });
+  historyRow.appendChild(redoBtn);
+
+  panel.appendChild(historyRow);
+  batchUndoBtn = undoBtn;
+  batchRedoBtn = redoBtn;
+  // Set initial state synchronously so the first paint isn't briefly
+  // "enabled then immediately disabled" before the subscriber fires.
+  syncBatchHistoryButtons(getHistoryStats());
+
   // --- 1. Resize -----------------------------------------------------------
   const resizeSection = buildSection(t('batchSectionResize'), 'batch-resize-section', true);
   const resizeMode = document.createElement('select');
@@ -844,30 +899,33 @@ function buildBatchPanel() {
   exportPdfBtn.hidden = true;
   exportSection.body.appendChild(exportPdfBtn);
 
-  // EXIF / GPS strip disclosure (v1.1). Same UI as the per-image editor's
-  // export panel — the privacy guarantee is the same, so the disclosure
-  // should be too. Verifies the first image of the most recent batch (set
-  // inside exporter.exportBatch / exportEachIndividually).
-  const batchExifRow = document.createElement('div');
-  batchExifRow.className = 'exif-status batch-exif-status';
-  const batchExifBadge = document.createElement('span');
-  batchExifBadge.className = 'exif-badge';
-  batchExifBadge.textContent = '✓';
-  batchExifBadge.setAttribute('aria-hidden', 'true');
-  batchExifRow.appendChild(batchExifBadge);
-  const batchExifLabel = document.createElement('span');
-  batchExifLabel.className = 'exif-label';
-  batchExifLabel.textContent = t('exifStripped');
-  batchExifLabel.setAttribute('title', t('exifTooltip'));
-  batchExifRow.appendChild(batchExifLabel);
-  const batchExifVerifyBtn = document.createElement('button');
-  batchExifVerifyBtn.type = 'button';
-  batchExifVerifyBtn.className = 'exif-verify-btn batch-exif-verify-btn';
-  batchExifVerifyBtn.textContent = t('exifVerify');
-  batchExifVerifyBtn.setAttribute('aria-label', t('exifVerify'));
-  batchExifVerifyBtn.addEventListener('click', onBatchVerifyExif);
-  batchExifRow.appendChild(batchExifVerifyBtn);
-  exportSection.body.appendChild(batchExifRow);
+  // Metadata toggle (v1.1.2). Mirrors the editor's export panel — the
+  // setting (state.export.stripMetadata) is global so the checkbox on
+  // either panel reflects the same state. When unchecked AND source +
+  // output are both JPEG, batch exporter splices source EXIF back in.
+  const batchStripRow = document.createElement('label');
+  batchStripRow.className = 'exif-status batch-exif-status';
+  const batchStripInput = document.createElement('input');
+  batchStripInput.type = 'checkbox';
+  batchStripInput.className = 'strip-metadata batch-strip-metadata';
+  batchStripInput.checked = true;
+  batchStripInput.addEventListener('change', () => {
+    update(s => { s.export.stripMetadata = !!batchStripInput.checked; });
+  });
+  batchStripRow.appendChild(batchStripInput);
+  const batchStripLabel = document.createElement('span');
+  batchStripLabel.className = 'exif-label';
+  batchStripLabel.textContent = t('stripMetadataLabel');
+  batchStripLabel.setAttribute('title', t('exifTooltip'));
+  batchStripRow.appendChild(batchStripLabel);
+  exportSection.body.appendChild(batchStripRow);
+
+  // Hint shown only when the toggle is OFF — explains the JPEG-only limit.
+  const batchStripHint = document.createElement('p');
+  batchStripHint.className = 'strip-metadata-hint';
+  batchStripHint.textContent = t('stripMetadataHint');
+  batchStripHint.hidden = true;
+  exportSection.body.appendChild(batchStripHint);
 
   panel.appendChild(exportSection.section);
 
@@ -959,6 +1017,7 @@ function buildBatchPanel() {
     fmtBtns, qInput, qReadout, qualityRow, fnInput, exportBtn, exportEachBtn, exportPdfBtn,
     smallestBtn, readout,
     pdfOptsRow, pdfPageSizeSel, pdfOrientSel, pdfMarginInput, pdfFitSel, pdfFitLabel,
+    batchStripInput, batchStripHint,
   };
 
   if (!panelSubscribed) {
@@ -1023,6 +1082,16 @@ function syncBatchPanel(state) {
   const exp = state.export || { format: 'png', quality: 0.92, filenameTemplate: '{base}-edited' };
   const pdfOpts = exp.pdf || { pageSize: 'fit', orientation: 'auto', margins: undefined, fitMode: 'contain' };
   const isPdf = exp.format === 'pdf';
+
+  // Strip-metadata checkbox: sync from state and toggle the hint visibility
+  // when the user opts out of stripping. Mirrors editor.js#syncExportPanel.
+  if (panelRefs.batchStripInput) {
+    const strip = exp.stripMetadata !== false;
+    if (document.activeElement !== panelRefs.batchStripInput) {
+      panelRefs.batchStripInput.checked = strip;
+    }
+    if (panelRefs.batchStripHint) panelRefs.batchStripHint.hidden = strip;
+  }
 
   // Active format chip.
   for (const [id, btn] of panelRefs.fmtBtns) {
@@ -1226,34 +1295,12 @@ function formatLabelBatch(fmt) {
   return String(fmt).toUpperCase();
 }
 
-// Inspect the most recently exported per-image Blob (the first successful
-// image from exportBatch, or the latest from exportEachIndividually) for
-// leaked metadata. Surfaces a toast either confirming the strip or listing
-// the tags found — see the editor's onVerifyExif for the symmetric path.
-async function onBatchVerifyExif() {
-  const last = getLastExportedBlob();
-  if (!last || !last.blob) {
-    showToast(t('exifVerifyNoExport'), { variant: 'info' });
-    return;
-  }
-  let result;
-  try {
-    result = await hasMetadata(last.blob);
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error('onBatchVerifyExif:', err);
-    showToast(t('exportGenericFailed'), { variant: 'error' });
-    return;
-  }
-  if (!result.exif && !result.xmp && !result.gps) {
-    showToast(t('exifVerifyClean'), { variant: 'info' });
-    return;
-  }
-  const tagsList = (result.tags && result.tags.length)
-    ? result.tags.join(', ')
-    : 'unknown';
-  showToast(t('exifVerifyFound', { tags: tagsList }), { variant: 'warn' });
-}
+// (Pre-v1.1.2 this file housed onBatchVerifyExif — the batch-panel
+// counterpart to the editor's "Verify last export" button. Removed for
+// the same reason: the framing implied the site cached export bytes
+// after download, which contradicts the "files never leave the browser"
+// promise. The privacy claim now lives in copy + DevTools, not a UI
+// button that pretends to introspect "what you just downloaded".)
 
 function batchStateSignature(img) {
   if (!img) return '';

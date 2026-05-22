@@ -37,8 +37,11 @@ let active = false;
 let detach = null;
 let overlayCanvas = null;
 
-let toolMode = 'blur';
+// v1.2: 'mask' is the privacy-safe default (blur is reversible at low
+// strength — see redact.js for the full rationale).
+let toolMode = 'mask';
 let toolStrength = 12;
+let toolColor = '#000000';
 
 let drawing = null; // { x1, y1, x2, y2 } in source-pixel space
 
@@ -162,6 +165,7 @@ function up(_e) {
   const overlay = newRedactOverlay(x, y, w, h, {
     mode: toolMode,
     strength: toolStrength,
+    color: toolColor,
   });
   withOverlaysHistory('Redact region', img.id, state => {
     const target = state.images[img.id];
@@ -224,7 +228,9 @@ function renderPanel() {
     btn.type = 'button';
     btn.className = `redact-mode redact-mode-${mode}`;
     btn.dataset.mode = mode;
-    btn.textContent = mode === 'pixelate' ? t('redactModePixelate') : t('redactModeBlur');
+    btn.textContent = mode === 'mask'     ? t('redactModeMask')
+                    : mode === 'pixelate' ? t('redactModePixelate')
+                    : t('redactModeBlur');
     btn.setAttribute('aria-label', btn.textContent);
     btn.addEventListener('click', () => {
       toolMode = mode;
@@ -237,7 +243,8 @@ function renderPanel() {
   modeRow.appendChild(modeGroup);
   root.appendChild(modeRow);
 
-  // Strength slider.
+  // Strength slider. Only meaningful for blur + pixelate — mask is a solid
+  // color rectangle so "strength" doesn't apply. Hidden when mode === 'mask'.
   const strengthRow = document.createElement('label');
   strengthRow.className = 'redact-row redact-strength-row';
   const strengthLabel = document.createElement('span');
@@ -258,6 +265,24 @@ function renderPanel() {
   strengthReadout.textContent = String(toolStrength);
   strengthRow.appendChild(strengthReadout);
   root.appendChild(strengthRow);
+
+  // Color picker for mask mode. Hidden for blur/pixelate.
+  const colorRow = document.createElement('label');
+  colorRow.className = 'redact-row redact-color-row';
+  const colorLabel = document.createElement('span');
+  colorLabel.textContent = t('redactColor');
+  colorRow.appendChild(colorLabel);
+  const colorInput = document.createElement('input');
+  colorInput.type = 'color';
+  colorInput.value = toolColor;
+  colorInput.className = 'redact-color';
+  colorInput.setAttribute('aria-label', t('redactColor'));
+  colorInput.addEventListener('input', () => {
+    toolColor = colorInput.value || '#000000';
+    patchSelectedRedact({ color: toolColor });
+  });
+  colorRow.appendChild(colorInput);
+  root.appendChild(colorRow);
 
   // Apply button — "done editing this redact." Deselects so a subsequent
   // drag starts a fresh redact instead of editing the previous one.
@@ -280,7 +305,9 @@ function renderPanel() {
   root.appendChild(hint);
 
   setToolPanel(root, { owner: 'redact' });
-  panelEls = { modeBtns, strengthInput, strengthReadout, applyBtn };
+  panelEls = { modeBtns, strengthInput, strengthReadout, applyBtn, strengthRow, colorRow, colorInput };
+  // Apply initial show/hide for the new color/strength rows.
+  syncModeBtns();
 
   strengthInput.addEventListener('input', () => {
     const n = clampStrength(Number(strengthInput.value));
@@ -320,6 +347,9 @@ function syncModeBtns() {
     if (!btn) continue;
     btn.classList.toggle('is-active', mode === toolMode);
   }
+  // Strength is for blur/pixelate only; color is for mask only.
+  if (panelEls.strengthRow) panelEls.strengthRow.hidden = toolMode === 'mask';
+  if (panelEls.colorRow)    panelEls.colorRow.hidden    = toolMode !== 'mask';
 }
 
 function clampStrength(n) {

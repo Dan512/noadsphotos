@@ -64,6 +64,22 @@ const history = {
 // toolbar Undo/Redo buttons to enable/disable themselves.
 const subs = new Set();
 
+// The most recent change to the history — kind ('undo'|'redo'|'record'|'clear')
+// + the affected image IDs. Subscribers (e.g. queueView) read this on each
+// notify() to figure out whether they need to do follow-up work (refreshing
+// thumbnails after undo, mainly). Reset to null after each notification so
+// stale data doesn't leak into a future read.
+let lastChange = null;
+
+/**
+ * Returns the descriptor of the most recently applied change, or null if
+ * nothing has happened (or the descriptor was already consumed in this tick).
+ * Shape: { kind: 'undo'|'redo'|'record'|'clear', ids: string[] }.
+ */
+export function getLastChange() {
+  return lastChange;
+}
+
 function notify() {
   for (const fn of subs) {
     try { fn(getHistoryStats()); } catch (err) { console.error('history subscriber error', err); }
@@ -303,6 +319,7 @@ export function undo() {
   history.bytes = Math.max(0, history.bytes - entry.sizeEstimate);
   history.future.push(entry);
   applyInverse(entry);
+  lastChange = { kind: 'undo', ids: entryAffectedIds(entry) };
   notify();
   return true;
 }
@@ -318,8 +335,21 @@ export function redo() {
   history.past.push(entry);
   history.bytes += entry.sizeEstimate;
   applyForward(entry);
+  lastChange = { kind: 'redo', ids: entryAffectedIds(entry) };
   notify();
   return true;
+}
+
+// Return the image IDs affected by a history entry — single-image ops have
+// one ID, batch transactions have many. Used by getLastChange() so
+// subscribers know which images need follow-up (e.g. thumbnail refresh).
+function entryAffectedIds(entry) {
+  if (!entry) return [];
+  if (entry.kind === 'transaction') {
+    return Array.isArray(entry.affectedImageIds) ? entry.affectedImageIds.slice() : [];
+  }
+  if (entry.imageId) return [entry.imageId];
+  return [];
 }
 
 // --- Internal: apply / invalidate -----------------------------------------

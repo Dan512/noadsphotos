@@ -31,11 +31,14 @@ test('manifest: every icon URL resolves with 200 OK', async ({ request }) => {
   }
 });
 
-test('manifest: has both SVG and PNG icons', async ({ request }) => {
+test('manifest: declares PNG icons (vector source dropped in v1.1.2)', async ({ request }) => {
+  // Pre-v1.1.2 the manifest included an `image/svg+xml` entry pointing at
+  // img/logo.svg (the old green "n." mark). The brand mark switched to a
+  // PNG-authored "🚫 Ads" design with no SVG counterpart, so the manifest
+  // is now PNG-only. Browser PWA installers all accept PNG fallbacks.
   const res = await request.get('/manifest.webmanifest');
   const manifest = await res.json();
   const types = manifest.icons.map(i => i.type || '');
-  expect(types).toContain('image/svg+xml');
   expect(types).toContain('image/png');
 });
 

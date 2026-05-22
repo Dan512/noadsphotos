@@ -5,6 +5,7 @@ import { showToast } from './errors.js';
 import { escapeHtml } from './escape.js';
 import { t } from './i18n.js';
 import { loadHeicDecoder } from './vendor/heic-loader.js';
+import { extractExifFromHeif } from './exif.js';
 
 const ACCEPTED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 // HEIC/HEIF go through the lazy libheif-js path (see vendor/heic-loader.js).
@@ -197,6 +198,30 @@ export async function importFiles(fileList, caps, lifecycle) {
 }
 
 async function importOne(file, caps) {
+  // v1.1.2: if the user later opts out of metadata stripping on export,
+  // we need access to the SOURCE EXIF. JPEG sources keep their APP1/Exif
+  // inside `source.blob` (we just read it lazily during export). HEIC
+  // sources are different — the importer re-encodes them as PNG below,
+  // which drops the original HEIF `Exif` item along with the rest of the
+  // metadata boxes. So we extract the EXIF segment from the raw HEIC
+  // bytes RIGHT NOW, before re-encoding, and stash it on the image state.
+  // Then `maybePreserveExif` can splice it into a JPEG export later.
+  let stashedExifSegment = null;
+  if (isHeicFile(file)) {
+    try {
+      stashedExifSegment = await extractExifFromHeif(file);
+    } catch (err) {
+      // EXIF extraction is best-effort. If the HEIC has no metadata, has
+      // a malformed `meta` box, or trips a parser edge case, the export
+      // simply won't have metadata to splice — same as PNG output.
+      // eslint-disable-next-line no-console
+      console.warn('importOne: HEIC EXIF extract failed (will export without metadata)', err);
+    }
+    const decoded = await decodeHeicFile(file);
+    if (!decoded) return false;
+    file = decoded;
+  }
+
   // HEIC/HEIF require the lazy libheif-js decoder. We replace `file` with a
   // PNG-encoded blob of the decoded bitmap so the rest of the importer
   // pipeline — and every downstream consumer of `source.blob` (lifecycle
@@ -204,11 +229,6 @@ async function importOne(file, caps) {
   // treats it as a standard PNG. This drops the original HEIC bytes from
   // memory (typically ~5-15 MB per phone photo) in exchange for a clean
   // pipeline downstream. Same trade as the oversize downscale path below.
-  if (isHeicFile(file)) {
-    const decoded = await decodeHeicFile(file);
-    if (!decoded) return false;
-    file = decoded;
-  }
 
   // Decode the source bitmap with EXIF orientation applied (modern browsers).
   let bitmap;
@@ -249,6 +269,11 @@ async function importOne(file, caps) {
     id: createId(),
     source: {
       blob: file,
+      // EXIF segment extracted from a HEIC source at import time (null for
+      // every other format). The exporter consults this when the user has
+      // opted to keep metadata + the output is JPEG. See
+      // js/exif.js#extractExifFromHeif + js/exporter.js#maybePreserveExif.
+      exifSegment: stashedExifSegment,
       name: file.name,
       type: file.type,
       width: bitmap.width,

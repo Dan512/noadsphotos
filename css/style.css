@@ -667,7 +667,8 @@ main#workspace:has(> #editor-view:not([hidden])) {
   width: 36px; height: 36px;
   display: grid; place-items: center;
 }
-.editor-toolbar button[data-tool].is-active {
+.editor-toolbar button[data-tool].is-active,
+.editor-toolbar #compare-toggle.is-active {
   background: var(--surface-2);
   outline: 2px solid var(--accent);
   outline-offset: -1px;
@@ -1560,6 +1561,11 @@ main#workspace:has(> #editor-view:not([hidden])) {
    text label conveys the same meaning for assistive tech and colorblind
    users (we don't rely on green alone). The Verify button is the only
    active control here — it inspects the last exported Blob's bytes. */
+/* v1.1.2: metadata toggle. Replaces the v1.1.x "EXIF stripped" badge +
+   Verify button (which incorrectly implied the site retained export
+   bytes for later inspection). The .exif-status class is now a checkbox
+   row: input + label, optional hint paragraph below shown when the user
+   opts out of stripping. */
 .editor-panel .export-panel .exif-status,
 .batch-panel .exif-status {
   display: flex;
@@ -1571,42 +1577,128 @@ main#workspace:has(> #editor-view:not([hidden])) {
   border-top: 1px dashed var(--border);
   font-size: var(--t-xs);
   color: var(--text-secondary);
-}
-.editor-panel .export-panel .exif-badge,
-.batch-panel .exif-badge {
-  /* Solid square so it's still visible without color perception. The "✓"
-     glyph carries the semantic; color is decoration. */
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.15em;
-  height: 1.15em;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  font-weight: 700;
-  color: var(--accent);
-  line-height: 1;
+  cursor: pointer;
 }
 .editor-panel .export-panel .exif-label,
 .batch-panel .exif-label {
   cursor: help;
 }
-.editor-panel .export-panel .exif-verify-btn,
-.batch-panel .exif-verify-btn {
-  margin-left: auto;
-  background: transparent;
-  color: var(--text);
-  border: 1px solid var(--border);
-  padding: 2px var(--space-xs);
+.editor-panel .export-panel .strip-metadata,
+.batch-panel .strip-metadata {
+  margin: 0;
+  cursor: pointer;
+}
+.editor-panel .export-panel .strip-metadata-hint,
+.batch-panel .strip-metadata-hint {
+  margin: var(--space-xs) 0 0;
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--surface-2);
   border-radius: var(--radius-control);
+  font-size: var(--t-xs);
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+/* v1.2 "View source metadata" button under the strip-metadata toggle. */
+.editor-panel .export-panel .view-metadata-btn {
+  display: block;
+  margin-top: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  color: var(--text);
   font: inherit;
   font-size: var(--t-xs);
   cursor: pointer;
-  transition: background-color var(--dur-fast) var(--ease-out);
 }
-.editor-panel .export-panel .exif-verify-btn:hover,
-.batch-panel .exif-verify-btn:hover {
-  background-color: var(--surface-2);
+.editor-panel .export-panel .view-metadata-btn:hover {
+  background: var(--surface-2);
+}
+
+/* v1.2 source-metadata audit modal. Plain table; the "Will be stripped /
+   kept" column is the column users actually look at. */
+.metadata-audit-dialog {
+  max-width: 640px;
+  width: calc(100vw - var(--space-xl) * 2);
+  padding: var(--space-lg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  color: var(--text);
+}
+.metadata-audit-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.5);
+}
+.metadata-audit-dialog .metadata-audit-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  margin-bottom: var(--space-sm);
+}
+.metadata-audit-dialog h2 {
+  margin: 0;
+  font-size: var(--t-lg);
+  font-weight: 600;
+}
+.metadata-audit-dialog .dialog-close {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.5em;
+  line-height: 1;
+  cursor: pointer;
+  padding: var(--space-xs);
+}
+.metadata-audit-dialog .metadata-audit-lead {
+  margin: 0 0 var(--space-md);
+  color: var(--text-secondary);
+  font-size: var(--t-sm);
+}
+.metadata-audit-dialog .metadata-audit-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--t-sm);
+}
+.metadata-audit-dialog .metadata-audit-table th,
+.metadata-audit-dialog .metadata-audit-table td {
+  padding: var(--space-xs) var(--space-sm);
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.metadata-audit-dialog .metadata-audit-table thead th {
+  font-size: var(--t-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.metadata-audit-dialog .metadata-audit-table tbody th {
+  font-weight: 600;
+  white-space: nowrap;
+  width: 30%;
+}
+.metadata-audit-dialog .metadata-audit-table .metadata-action {
+  font-weight: 600;
+  white-space: nowrap;
+  text-align: right;
+}
+.metadata-audit-dialog .metadata-audit-table tr.severity-high th {
+  /* GPS row gets a left bar so colorblind users see the emphasis without
+     relying on red text. */
+  border-left: 3px solid var(--accent);
+  padding-left: calc(var(--space-sm) - 3px);
+}
+.metadata-audit-dialog .metadata-audit-footer {
+  margin-top: var(--space-md);
+}
+.metadata-audit-dialog .metadata-audit-footnote {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--t-xs);
+  line-height: 1.4;
 }
 
 /* --- Batch panel + thumb badge (queueView.js, Phase 10) --- */
@@ -1631,6 +1723,31 @@ main#workspace:has(> #editor-view:not([hidden])) {
   margin: 0 0 var(--space-xs);
   font-size: var(--t-md);
   font-weight: 600;
+}
+
+/* History controls at the top of the batch panel (v1.1.2). Two icon-only
+   buttons sitting side-by-side below the heading; same glyphs as the
+   editor toolbar's Undo/Redo. */
+.batch-panel .batch-history {
+  display: flex;
+  gap: var(--space-xs);
+  margin: 0 0 var(--space-sm);
+}
+.batch-panel .batch-history button {
+  flex: 0 0 auto;
+  padding: var(--space-xs) var(--space-sm);
+  font-size: var(--t-md);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}
+.batch-panel .batch-history button:hover:not(:disabled) {
+  background: var(--surface);
+}
+.batch-panel .batch-history button:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .batch-section {

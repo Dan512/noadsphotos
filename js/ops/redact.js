@@ -11,10 +11,17 @@
 // `applyRedactFx()` and is invoked by the preview/export renderers
 // against the base canvas, not the overlay canvas.
 
-const DEFAULT_MODE = 'blur';
+// v1.2: 'mask' (solid color rectangle) is the default. The "blur is
+// reversible" privacy claim (multiple sources cited in the v1.2 research
+// round) makes a solid block the safe default. Blur + pixelate remain
+// available as "visual only" options for the cases where users WANT the
+// effect to be visually softer (e.g., redacting a face in a photo where
+// a black box looks too jarring).
+const DEFAULT_MODE = 'mask';
 const DEFAULT_STRENGTH = 12;
+const DEFAULT_COLOR = '#000000';
 
-const MODES = Object.freeze(['blur', 'pixelate']);
+const MODES = Object.freeze(['mask', 'blur', 'pixelate']);
 
 /**
  * Create a new redact overlay over the given rect.
@@ -27,6 +34,9 @@ export function newRedactOverlay(x, y, w, h, opts = {}) {
     x, y, w, h,
     mode: MODES.includes(opts.mode) ? opts.mode : DEFAULT_MODE,
     strength: Number.isFinite(opts.strength) ? opts.strength : DEFAULT_STRENGTH,
+    // v1.2: hex string used by 'mask' mode (ignored by blur/pixelate).
+    // Default black; users can change in the edit panel.
+    color: typeof opts.color === 'string' ? opts.color : DEFAULT_COLOR,
   };
 }
 
@@ -67,7 +77,9 @@ export function applyRedactFx(ctx, r, caps) {
   if (cw <= 0 || ch <= 0) return;
 
   const mode = MODES.includes(r.mode) ? r.mode : DEFAULT_MODE;
-  if (mode === 'pixelate') {
+  if (mode === 'mask') {
+    applyMask(ctx, cx, cy, cw, ch, typeof r.color === 'string' ? r.color : DEFAULT_COLOR);
+  } else if (mode === 'pixelate') {
     applyPixelate(ctx, cx, cy, cw, ch, strength);
   } else {
     if (caps && caps.ctxFilter === false) {
@@ -77,6 +89,18 @@ export function applyRedactFx(ctx, r, caps) {
       applyBlur(ctx, cx, cy, cw, ch, strength);
     }
   }
+}
+
+// Solid-color rectangle. The privacy-safe default — no information about
+// the underlying pixels survives, unlike blur (reversible at low strength)
+// or pixelate (high-frequency patterns can sometimes survive).
+function applyMask(ctx, x, y, w, h, color) {
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = color;
+  ctx.clearRect(x, y, w, h);
+  ctx.fillRect(x, y, w, h);
+  ctx.restore();
 }
 
 function applyPixelate(ctx, x, y, w, h, blockSize) {
@@ -199,9 +223,9 @@ export function drawRedact(ctx, r) {
   // Small mode label at the top-left.
   ctx.font = '500 12px Onest, system-ui, sans-serif';
   ctx.textBaseline = 'top';
-  const label = r.mode === 'pixelate'
-    ? `pixelate ${r.strength}`
-    : `blur ${r.strength}`;
+  const label = r.mode === 'mask'
+    ? 'mask'
+    : (r.mode === 'pixelate' ? `pixelate ${r.strength}` : `blur ${r.strength}`);
   const padX = 4;
   const padY = 2;
   const metrics = ctx.measureText(label);

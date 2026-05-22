@@ -22,6 +22,7 @@ const TOOL_CANCEL = Object.freeze({
   select:     () => false,
   pan:        () => false,
   crop:       () => false,   // TODO v1.1.2: cancel in-progress crop drag
+  transform:  () => false,   // no in-flight gesture (rotate slider uses focus/blur)
   text:       () => false,   // TODO v1.1.2: discard uncommitted text edit
   brush:      () => false,   // TODO v1.1.2: discard unfinished stroke
   shape:      () => false,   // TODO v1.1.2: discard in-progress shape

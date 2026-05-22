@@ -48,21 +48,24 @@ function callsOfType(ctx, name) {
 
 // --- REDACT_MODES ---------------------------------------------------------
 
-test('REDACT_MODES: contains blur, pixelate', () => {
-  assert.deepEqual([...REDACT_MODES].sort(), ['blur', 'pixelate']);
+test('REDACT_MODES: contains mask, blur, pixelate (v1.2)', () => {
+  assert.deepEqual([...REDACT_MODES].sort(), ['blur', 'mask', 'pixelate']);
 });
 
 // --- newRedactOverlay -----------------------------------------------------
 
-test('newRedactOverlay: applies defaults', () => {
+test('newRedactOverlay: applies defaults (v1.2: mask is the default)', () => {
   const o = newRedactOverlay(10, 20, 100, 80);
   assert.equal(o.type, 'redact');
   assert.equal(o.x, 10);
   assert.equal(o.y, 20);
   assert.equal(o.w, 100);
   assert.equal(o.h, 80);
-  assert.equal(o.mode, 'blur');
+  // v1.2: solid-block mask is the privacy-safe default (blur is reversible
+  // at low strength per the privacy research literature).
+  assert.equal(o.mode, 'mask');
   assert.equal(o.strength, 12);
+  assert.equal(o.color, '#000000');
   assert.equal(o.rot, 0);
   assert.equal(typeof o.id, 'string');
   assert.ok(o.id.length > 0);
@@ -74,9 +77,15 @@ test('newRedactOverlay: applies opts', () => {
   assert.equal(o.strength, 24);
 });
 
-test('newRedactOverlay: invalid mode falls back to blur', () => {
+test('newRedactOverlay: mask mode accepts custom color', () => {
+  const o = newRedactOverlay(0, 0, 50, 50, { mode: 'mask', color: '#ff0000' });
+  assert.equal(o.mode, 'mask');
+  assert.equal(o.color, '#ff0000');
+});
+
+test('newRedactOverlay: invalid mode falls back to mask (v1.2 default)', () => {
   const o = newRedactOverlay(0, 0, 50, 50, { mode: 'bogus' });
-  assert.equal(o.mode, 'blur');
+  assert.equal(o.mode, 'mask');
 });
 
 test('newRedactOverlay: non-finite strength falls back to default', () => {

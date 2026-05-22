@@ -26,6 +26,7 @@ import { EncodeError } from './codec.js';
 import { escapeHtml } from './escape.js';
 import { loadJSZip } from './vendor/jszip-loader.js';
 import { t } from './i18n.js';
+import { extractExifSegment, injectExifIntoJpeg } from './exif.js';
 
 /**
  * Pretty-print a byte count. Used by the predicted-size readout, success
@@ -280,6 +281,13 @@ export async function exportSingle(imageId, lifecycleOrOpts = ctxLifecycle, caps
     }
   }
 
+  // v1.1.2: optional EXIF preservation. When the user has unchecked "Strip
+  // metadata" AND the source is JPEG AND the output is JPEG, splice the
+  // source's APP1/Exif segment into the Canvas-encoded blob so GPS/camera
+  // info survives the round-trip. Default (strip) is the safe path — no
+  // metadata is injected and Canvas's natural strip behaviour wins.
+  blob = await maybePreserveExif(img, blob, format, s.export.stripMetadata);
+
   const filename = makeFilename(img, format, filenameTemplate);
   try {
     triggerDownload(blob, filename);
@@ -376,7 +384,8 @@ export async function exportBatch(opts = {}) {
     progress.itemUpdate(i, 'encoding', null);
 
     try {
-      const blob = await renderForExport(img, { format, quality }, caps, lifecycle);
+      let blob = await renderForExport(img, { format, quality }, caps, lifecycle);
+      blob = await maybePreserveExif(img, blob, format, s.export.stripMetadata);
       const baseName = applyFilenameTemplate(filenameTemplate, img, i, format, ids.length);
       const name = uniquifyName(baseName, usedNames);
       usedNames.add(name);
@@ -530,7 +539,8 @@ export async function exportEachIndividually(opts = {}) {
     progress.itemUpdate(i, 'encoding', null);
 
     try {
-      const blob = await renderForExport(img, { format, quality }, caps, lifecycle);
+      let blob = await renderForExport(img, { format, quality }, caps, lifecycle);
+      blob = await maybePreserveExif(img, blob, format, s.export.stripMetadata);
       const baseName = applyFilenameTemplate(filenameTemplate, img, i, format, ids.length);
       const name = uniquifyName(baseName, usedNames);
       usedNames.add(name);
@@ -754,6 +764,64 @@ function warnIfNeeded(img, caps) {
  *
  * Exported for unit-style coverage from browser tests.
  */
+
+/**
+ * If the user opted out of metadata stripping AND the output is JPEG,
+ * splice an APP1/Exif segment into the freshly-encoded output blob. The
+ * segment comes from one of two places, in order of preference:
+ *
+ *   1. `img.source.exifSegment` — pre-extracted at import time, currently
+ *      set only for HEIC sources (the HEIF container's `Exif` item gets
+ *      transcoded into a JPEG-compatible segment via extractExifFromHeif
+ *      in js/exif.js). HEIC pixels are re-encoded as PNG at import, so by
+ *      the time we get here `source.blob` no longer contains the original
+ *      metadata — but the stashed segment does.
+ *   2. Extracted on the spot from `img.source.blob` — works for JPEG
+ *      sources (the original APP1 sits inside source.blob unchanged).
+ *
+ * Combinations that DON'T preserve metadata (intentional):
+ *   - Output != JPEG (PNG eXIf / WebP EXIF chunk could be implemented but
+ *     consuming software handles them spottily — high-confidence JPEG path
+ *     ships now; cross-format can follow if anyone asks).
+ *   - Source is PNG or WebP with no stashed segment — nothing to recover.
+ *   - Source was JPEG but got re-encoded due to oversize downscale (rare;
+ *     the re-encoded blob is canvas output, no original APP1 remains).
+ *
+ * @param {object} img — per-image state with `.source.blob` + `.source.type`
+ *                       (+ optional `.source.exifSegment`)
+ * @param {Blob}   blob — the just-encoded output blob
+ * @param {string} format — user-facing format string ('jpeg' / 'png' / etc.)
+ * @param {boolean} strip — `state.export.stripMetadata`
+ * @returns {Promise<Blob>}
+ */
+async function maybePreserveExif(img, blob, format, strip) {
+  if (strip !== false) return blob;             // default path: keep stripping
+  if (!img || !img.source) return blob;
+  const outIsJpeg = String(format || '').toLowerCase().includes('jpeg') ||
+                    String(format || '').toLowerCase() === 'jpg' ||
+                    (blob && blob.type && blob.type.includes('jpeg'));
+  if (!outIsJpeg) return blob;
+  try {
+    // Prefer the stashed segment (HEIC import path); fall back to extracting
+    // from the source blob (JPEG import path).
+    let segment = img.source.exifSegment;
+    if (!segment && img.source.blob) {
+      const srcType = String(img.source.type || '').toLowerCase();
+      if (srcType.includes('jpeg')) {
+        segment = await extractExifSegment(img.source.blob);
+      }
+    }
+    if (!segment) return blob;
+    return await injectExifIntoJpeg(blob, segment);
+  } catch (err) {
+    // Failing to preserve metadata is a soft fault — the export itself
+    // still succeeds with the safe (stripped) blob. Log and continue.
+    // eslint-disable-next-line no-console
+    console.warn('maybePreserveExif: failed to inject EXIF', err);
+    return blob;
+  }
+}
+
 export function makeFilename(img, format, template) {
   const orig = (img && img.source && img.source.name) || 'image';
   const base = sanitizeFilenameBase(String(orig).replace(/\.[^.]+$/, '') || 'image');
