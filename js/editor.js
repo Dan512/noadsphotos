@@ -575,7 +575,8 @@ function buildResizePanel() {
   });
 
   resizePanelBody.replaceChildren(root);
-  resizeEls = { modeSel, valueLabel, valueInput, heightWrap, heightInput, lockWrap, lockChk, readout, applyBtn };
+  resizeEls = { modeSel, valueWrap, valueLabel, valueInput, heightWrap, heightInput, lockWrap, lockChk, readout, applyBtn };
+  updateValueRowForMode(modeSel.value);
 
   // Pending-until-Apply model:
   //   - mode/value/height/lock changes only update the DOM + readout
@@ -589,6 +590,10 @@ function buildResizePanel() {
     // Show/hide height + lock rows based on mode.
     heightWrap.hidden = mode !== 'exact';
     lockWrap.hidden = mode !== 'exact';
+    // Relabel the value row to reflect what the number actually represents
+    // (Long side / Width / Percent / …), and hide it entirely in 'free' mode
+    // where there's no value to type.
+    updateValueRowForMode(mode);
     if (mode === 'free') {
       // Instant action: clear any existing resize from state.
       const img = getActiveImage();
@@ -614,6 +619,38 @@ function buildResizePanel() {
   valueInput.addEventListener('input', () => refreshPendingResize(valueInput));
   heightInput.addEventListener('input', () => refreshPendingResize(heightInput));
   applyBtn.addEventListener('click', applyPendingResize);
+}
+
+// Map from the dropdown's `value` to the i18n key used for the Value-row
+// label. Mirrors the dropdown options exactly — the row label re-uses the
+// same translated text the user just picked. Exact mode collapses to "Width"
+// because the Height field comes via heightWrap, which is shown separately.
+const VALUE_ROW_LABEL_KEY_BY_MODE = Object.freeze({
+  longestSide:  'resizeModeLongest',
+  shortestSide: 'resizeModeShortest',
+  width:        'resizeModeWidth',
+  height:       'resizeModeHeightLabel',
+  percent:      'resizeModePercent',
+  exact:        'resizeModeWidth',
+});
+
+// Relabel (or hide) the value row based on the chosen mode. Called whenever
+// the mode dropdown changes or state syncs in from elsewhere.
+//   - 'free'  → hide the row entirely (no value to type when reverting).
+//   - others  → label becomes the mode's own name ("Long side", "Percent",
+//               "Width", …) so the input field clearly states which dimension
+//               it controls. aria-label tracks the visible label.
+function updateValueRowForMode(mode) {
+  if (!resizeEls) return;
+  if (mode === 'free') {
+    resizeEls.valueWrap.hidden = true;
+    return;
+  }
+  resizeEls.valueWrap.hidden = false;
+  const key = VALUE_ROW_LABEL_KEY_BY_MODE[mode] || 'resizeValue';
+  const label = t(key);
+  resizeEls.valueLabel.textContent = label;
+  resizeEls.valueInput.setAttribute('aria-label', label);
 }
 
 // Compute the resize payload encoded in the panel DOM (mode + value + optional
@@ -949,6 +986,10 @@ function syncResizePanel() {
     resizeEls.heightWrap.hidden = cur !== 'exact';
     resizeEls.lockWrap.hidden = cur !== 'exact';
   }
+
+  // Make sure the Value row's label reflects whatever mode the dropdown ends
+  // up on after the sync above ("Long side", "Width", "Percent", …).
+  updateValueRowForMode(resizeEls.modeSel.value);
 
   refreshPendingResize();
 }
