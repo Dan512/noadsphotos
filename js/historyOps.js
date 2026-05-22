@@ -28,6 +28,22 @@ function wrap(mutator) {
   };
 }
 
+// Single-image edit wrapper. Same as `wrap()` but also clears the per-image
+// `_isBatch` flag on the touched image, so the (batch) badge on that
+// thumbnail goes away the moment the user makes an individual edit. This is
+// the flag-based version of the old change-detection subscriber in
+// queueView.js — see docs/plans/2026-05-22-v1.1.1-ui-refresh-design.md §7
+// for the rationale.
+function wrapClearBatch(imageId, mutator) {
+  return state => {
+    update(s => {
+      mutator(s);
+      const img = s.images[imageId];
+      if (img && img._isBatch) img._isBatch = false;
+    });
+  };
+}
+
 // Each snapshotKeys array is the minimum sub-tree of the ImageState that the
 // op kind can touch. Keeping these tight is the main lever on history size.
 
@@ -38,23 +54,23 @@ const KEYS_OVERLAYS   = ['overlays'];
 const KEYS_BGMASK     = ['bgRemoved', 'bgMask'];
 
 export function withTransformsHistory(label, imageId, mutator) {
-  return withHistory(label, imageId, 'transforms', KEYS_TRANSFORMS, wrap(mutator));
+  return withHistory(label, imageId, 'transforms', KEYS_TRANSFORMS, wrapClearBatch(imageId, mutator));
 }
 
 export function withAdjustHistory(label, imageId, mutator) {
-  return withHistory(label, imageId, 'adjust', KEYS_ADJUST, wrap(mutator));
+  return withHistory(label, imageId, 'adjust', KEYS_ADJUST, wrapClearBatch(imageId, mutator));
 }
 
 export function withChromakeyHistory(label, imageId, mutator) {
-  return withHistory(label, imageId, 'chromakey', KEYS_CHROMAKEY, wrap(mutator));
+  return withHistory(label, imageId, 'chromakey', KEYS_CHROMAKEY, wrapClearBatch(imageId, mutator));
 }
 
 export function withOverlaysHistory(label, imageId, mutator) {
-  return withHistory(label, imageId, 'overlay', KEYS_OVERLAYS, wrap(mutator));
+  return withHistory(label, imageId, 'overlay', KEYS_OVERLAYS, wrapClearBatch(imageId, mutator));
 }
 
 export function withBgMaskHistory(label, imageId, mutator) {
-  return withHistory(label, imageId, 'bgmask', KEYS_BGMASK, wrap(mutator));
+  return withHistory(label, imageId, 'bgmask', KEYS_BGMASK, wrapClearBatch(imageId, mutator));
 }
 
 // Batch variants ----------------------------------------------------------

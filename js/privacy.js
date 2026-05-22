@@ -15,15 +15,17 @@ import { t } from './i18n.js';
 let dialogEl = null;
 
 export function initPrivacy() {
-  const link = document.getElementById('privacy-toggle');
-  if (!link) return;
-  // The footer item may be either an <a> (legacy markup) or a <button>
-  // (Phase 12B). Either way, click handler hijacks navigation and opens
-  // the modal in-app.
-  link.addEventListener('click', (e) => {
-    e.preventDefault();
-    openPanel();
-  });
+  // Two privacy triggers as of v1.1.1: the footer button (always present,
+  // visible on mobile) AND a new header link (visible on desktop, hidden
+  // on mobile via .header-only-desktop). Both open the same modal.
+  for (const id of ['privacy-toggle', 'privacy-toggle-header']) {
+    const link = document.getElementById(id);
+    if (!link) continue;
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      openPanel();
+    });
+  }
 }
 
 function openPanel() {

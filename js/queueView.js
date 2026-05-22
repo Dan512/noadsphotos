@@ -386,6 +386,21 @@ const RESIZE_MODES = [
   { value: 'exact',        i18n: 'resizeModeExact' },
 ];
 
+// Map from the batch-resize dropdown's `value` to the i18n key used for the
+// Value-row label. Mirrors the dropdown options exactly so the row label
+// re-uses the same translated text the user just picked. Exact mode collapses
+// to "Width" because the Height field comes via its own row.
+// (Same shape as editor.js's VALUE_ROW_LABEL_KEY_BY_MODE — kept duplicated
+// rather than imported to avoid a fan-out from queueView → editor.)
+const BATCH_VALUE_ROW_LABEL_KEY_BY_MODE = Object.freeze({
+  longestSide:  'resizeModeLongest',
+  shortestSide: 'resizeModeShortest',
+  width:        'resizeModeWidth',
+  height:       'resizeModeHeightLabel',
+  percent:      'resizeModePercent',
+  exact:        'resizeModeWidth',
+});
+
 const FILTER_OPTIONS = [
   { value: 'none',      i18n: 'filterPresetNone' },
   { value: 'grayscale', i18n: 'filterPresetGrayscale' },
@@ -447,13 +462,21 @@ function buildBatchPanel() {
   }
   resizeSection.body.appendChild(labelRow(t('resizeMode'), resizeMode));
 
+  // Build the Value row inline (instead of through labelRow) so we can keep
+  // a reference to the label <span> and re-label it as the mode changes.
+  // Matches the single-image resize panel's behavior (editor.js
+  // updateValueRowForMode).
+  const resizeValueRow = document.createElement('label');
+  resizeValueRow.className = 'batch-row';
+  const resizeValueLabelEl = document.createElement('span');
+  resizeValueLabelEl.textContent = t('resizeValue');
   const resizeValue = document.createElement('input');
   resizeValue.type = 'number';
   resizeValue.min = '1';
   resizeValue.step = '1';
   resizeValue.className = 'batch-resize-value';
   resizeValue.setAttribute('aria-label', t('batchValueAria'));
-  const resizeValueRow = labelRow(t('resizeValue'), resizeValue);
+  resizeValueRow.append(resizeValueLabelEl, resizeValue);
   resizeSection.body.appendChild(resizeValueRow);
 
   const resizeHeight = document.createElement('input');
@@ -849,10 +872,28 @@ function buildBatchPanel() {
   panel.appendChild(exportSection.section);
 
   // --- Wire actions ------------------------------------------------------
-  // Resize mode change: show/hide height field.
+  // Resize mode change: show/hide height field AND relabel the Value row to
+  // match the chosen dimension (mirrors single-image resize panel). When the
+  // mode is 'free' (Revert to original), the Value field has no meaning, so
+  // hide the whole row.
+  function updateBatchValueRowForMode(mode) {
+    if (mode === 'free') {
+      resizeValueRow.hidden = true;
+      resizeHeightRow.hidden = true;
+      return;
+    }
+    resizeValueRow.hidden = false;
+    resizeHeightRow.hidden = mode !== 'exact';
+    const key = BATCH_VALUE_ROW_LABEL_KEY_BY_MODE[mode] || 'resizeValue';
+    const label = t(key);
+    resizeValueLabelEl.textContent = label;
+    resizeValue.setAttribute('aria-label', label);
+  }
   resizeMode.addEventListener('change', () => {
-    resizeHeightRow.hidden = resizeMode.value !== 'exact';
+    updateBatchValueRowForMode(resizeMode.value);
   });
+  // Initial label sync.
+  updateBatchValueRowForMode(resizeMode.value);
 
   resizeApply.addEventListener('click', () => {
     onApplyResize(resizeMode.value, resizeValue.value, resizeHeight.value);
@@ -1638,71 +1679,28 @@ async function readSourceImageData(img) {
 }
 
 // --------------------------------------------------------------------------
-// Badge-clearing hook: any per-image edit clears the (batch) badge by
-// flipping img._isBatch = false. We piggyback on state changes — the
-// state subscriber below resets the flag whenever the active image
-// changes through editor history events. Simpler model: every state
-// change that DOESN'T come from this module's batch handlers can clear
-// the flag.
+// Badge-clearing hook: any single-image edit clears the (batch) badge.
 //
-// In practice we let the editor's per-image actions clear the flag
-// explicitly. Since editor.js already wraps its history records, we
-// attach a state listener that watches for editing of an individual
-// image's category and clears the flag on first edit. This is the
-// "simple flag" model from the Phase 10 spec.
+// v1.1.1: this was previously done by a state subscriber here that did
+// dirty-checking against the previous transforms/adjust snapshot to detect
+// "per-image edits" and clear `_isBatch`. That model had a bug — repeated
+// batch operations (e.g. rotating 90° four times via the batch panel) also
+// changed transforms, so the subscriber incorrectly classified the second
+// batch op as a per-image edit and cleared the pill. Pill flickered on/off
+// across consecutive batch ops.
+//
+// New model: clearing is flag-based, not value-based. The single-image
+// history wrappers in historyOps.js (withTransformsHistory,
+// withAdjustHistory, withChromakeyHistory, withOverlaysHistory,
+// withBgMaskHistory) explicitly set `img._isBatch = false` inside their
+// update block. Batch wrappers (withBatchTransforms et al.) call
+// markBatch() which sets `_isBatch = true`. The two paths can't conflict,
+// and the pill behaves predictably regardless of the transform value.
+//
+// See: docs/plans/2026-05-22-v1.1.1-ui-refresh-design.md §7.
 // --------------------------------------------------------------------------
 
-// Track last-seen image snapshots to detect per-image changes.
-const lastSeen = new Map();    // id → { transforms, adjust, filterPreset, chromakey, overlays }
-
-subscribe(state => {
-  // Only matters once images exist.
-  if (!state || !state.images) return;
-  for (const id of state.queue) {
-    const img = state.images[id];
-    if (!img) continue;
-    const cur = snapshot(img);
-    const prev = lastSeen.get(id);
-    if (img._isBatch && prev && prev.isBatch && hasPerImageChange(prev, cur)) {
-      img._isBatch = false;
-      cur.isBatch = false;
-    }
-    lastSeen.set(id, cur);
-  }
-  // Drop stale entries.
-  for (const id of [...lastSeen.keys()]) {
-    if (!state.images[id]) lastSeen.delete(id);
-  }
-});
-
-// Snapshot the fields whose change indicates a per-image edit. We
-// serialize transforms / adjust into strings because those subobjects are
-// mutated in place by their respective ops modules (applyResize mutates
-// transforms.resize without creating a new transforms object), so
-// reference identity wouldn't catch any change. filterPreset is a
-// primitive. chromakey + overlays ARE re-assigned wholesale by their ops
-// so reference identity does catch them — we keep them as refs to avoid
-// stringifying typed arrays or large overlay payloads.
-function snapshot(img) {
-  return {
-    transforms:   stringifySafe(img.transforms),
-    adjust:       stringifySafe(img.adjust),
-    filterPreset: img.filterPreset,
-    chromakey:    img.chromakey,
-    overlays:     img.overlays,
-    isBatch:      !!img._isBatch,
-  };
-}
-
-function stringifySafe(v) {
-  if (v == null) return '';
-  try { return JSON.stringify(v); } catch { return ''; }
-}
-
-function hasPerImageChange(prev, cur) {
-  return prev.transforms   !== cur.transforms
-      || prev.adjust       !== cur.adjust
-      || prev.filterPreset !== cur.filterPreset
-      || prev.chromakey    !== cur.chromakey
-      || prev.overlays     !== cur.overlays;
-}
+// (Previously: stringifySafe + hasPerImageChange helpers used by the
+// removed change-detection subscriber. See v1.1.1 design §7 for why
+// they were dropped. Pill clearing is now flag-based via the single-image
+// history wrappers in historyOps.js.)

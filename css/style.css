@@ -242,6 +242,35 @@ footer {
   font-size: var(--t-sm);
 }
 
+/* Header Privacy link (desktop only) — pairs with the .header-divider span
+   and the #privacy-toggle-header button. The .header-only-desktop class on
+   each makes them visible only at the desktop breakpoint; mobile keeps the
+   footer with its full set of links. */
+.topbar .header-link {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--t-sm);
+  padding: var(--space-xs) var(--space-sm);
+  cursor: pointer;
+  border-radius: var(--radius-control);
+}
+.topbar .header-link:hover { color: var(--text); background-color: var(--surface-2); }
+.topbar .header-divider {
+  color: var(--text-muted);
+  margin: 0 var(--space-xs);
+}
+
+/* Desktop: hide body footer, show header links. */
+@media (min-width: 768px) {
+  body > footer { display: none; }
+}
+/* Mobile: hide header-only links, keep footer. */
+@media (max-width: 767px) {
+  .topbar .header-only-desktop { display: none; }
+}
+
 :where(button) {
   background: none;
   border: none;
@@ -651,9 +680,19 @@ main#workspace:has(> #editor-view:not([hidden])) {
 }
 .editor-toolbar .spacer { flex: 1; }
 
-.canvas-frame {
+/* v1.1.1: .canvas-area is the non-scrolling wrapper that owns the grid
+   slot. The scrolling .canvas-frame lives inside it, alongside the
+   sticky .zoom-controls. Without this wrapper, the zoom pill scrolled
+   away with the canvas content when the user panned a zoomed image. */
+.canvas-area {
   grid-area: canvas;
   position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+.canvas-frame {
+  position: absolute;
+  inset: 0;
   display: grid;
   place-items: center;
   background: var(--surface-2);
@@ -668,6 +707,14 @@ main#workspace:has(> #editor-view:not([hidden])) {
   /* No max-width/max-height clamp — JS sizes the canvas to image × zoom and
      we want it to overflow the frame at high zoom so the user can pan. */
 }
+/* Pan tool cursors: grab when armed, grabbing while actively dragging.
+   Both the dedicated Pan tool (is-pan-tool-active) and the Space-held
+   temporary accelerator (is-pan-temporarily-active) use the same visual
+   styling — only difference is whether the active tool changes or not. */
+.canvas-frame.is-pan-tool-active,
+.canvas-frame.is-pan-temporarily-active { cursor: grab; }
+.canvas-frame.is-pan-tool-active.is-panning,
+.canvas-frame.is-pan-temporarily-active.is-panning { cursor: grabbing; }
 #base-canvas, #overlay-canvas {
   position: absolute;
   /* Suppress browser pan/zoom gestures so tools own touch input. The
@@ -691,6 +738,10 @@ main#workspace:has(> #editor-view:not([hidden])) {
   border: 1px solid var(--border);
   border-radius: var(--radius-pill);
   align-items: center;
+  /* v1.1.1: lives in .canvas-area (sibling of the scrolling .canvas-frame),
+     so it stays stuck to the visible frame's bottom-center even when the
+     user pans a zoomed image. z-index keeps it above the canvas. */
+  z-index: 2;
 }
 .zoom-controls button, .zoom-controls select {
   background: transparent;

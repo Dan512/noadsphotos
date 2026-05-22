@@ -54,6 +54,15 @@ let panelEls = null;              // { swatch, hexInput, tolInput, tolReadout, a
 let currentHex = '';
 let currentTol = 25;              // default per spec
 
+// "There's an uncommitted pick in flight." Set by setColor() (manual hex
+// input + canvas pixel pick), cleared by Apply (commit) and Cancel (revert)
+// + tool deactivation. Used by cancelEyedropperTool() so undo / Ctrl+Z can
+// roll back the live preview without invoking history.
+//
+// See v1.1.1 design §9 for the broader "undo cancels in-progress tool
+// actions" pattern this implements.
+let hasPendingPick = false;
+
 // Per-image cache of source-resolution ImageData. Lets us skip re-reading
 // pixels for each mask rebuild while the user drags the slider. Keyed by
 // bitmap so the entry GCs when the lifecycle evicts a bitmap.
@@ -111,6 +120,10 @@ function activate() {
 
 function deactivate() {
   active = false;
+  // Pending pick state doesn't survive tool switches; if the user activates
+  // the eyedropper again, they start fresh. (The chromakey on the image
+  // itself persists per the long-standing design.)
+  hasPendingPick = false;
   if (detach) {
     try { detach(); } catch { /* ignore */ }
     detach = null;
@@ -182,6 +195,9 @@ function onUp(e) {
 
 function setColor(hex) {
   currentHex = normalizeHex(hex);
+  // Any pick (whether from canvas click or manual hex input) makes the
+  // tool's state "in flight" — Apply commits it, Cancel/undo reverts it.
+  hasPendingPick = true;
   if (panelEls) {
     panelEls.hexInput.value = currentHex;
     panelEls.swatch.style.backgroundColor = currentHex;
@@ -371,6 +387,10 @@ function renderPanel() {
   applyBtn.addEventListener('click', () => {
     const img = getActiveImage();
     if (!img || !currentHex) return;
+    // After commit, there's no longer an uncommitted pick in flight.
+    // (The chromakey now lives in state + history; Ctrl+Z should fall
+    // through to history.undo() rather than the cancel path.)
+    hasPendingPick = false;
     // Snapshot before the commit. applyChromakey writes only `chromakey`
     // (the mask is updated independently via the live preview rebuild path),
     // so the before/after snapshot only needs `chromakey` + `chromakeyMask`.
@@ -411,6 +431,7 @@ function renderPanel() {
     }
     currentHex = '';
     currentTol = 25;
+    hasPendingPick = false;
     if (panelEls) {
       panelEls.hexInput.value = '';
       panelEls.swatch.style.backgroundColor = '';
@@ -419,6 +440,38 @@ function renderPanel() {
     }
     update(s => { s.ui.activeTool = 'select'; });
   });
+}
+
+// Cancel an in-flight pick (the eyedropper has been used to sample a color
+// but Apply hasn't been clicked yet). Called by the global undo handler so
+// Ctrl+Z reverts a tentative pick instead of being a no-op (the v1.1 bug
+// Dan reported: "eyedropped → click a color → click undo, it does nothing").
+//
+// Returns `true` if there was an uncommitted pick to revert (caller should
+// stop and NOT proceed to history.undo). Returns `false` if the tool was
+// idle or all picks have already been Applied.
+//
+// Side effects on `true`: clears the chromakey/mask on the active image
+// (mirrors the Cancel button), resets the panel's color + tolerance fields,
+// keeps the eyedropper active so the user can pick again. We deliberately
+// do NOT switch tools (unlike the Cancel button) — undo should feel like
+// "step back," not "abandon this tool."
+export function cancelEyedropperTool() {
+  if (!active || !hasPendingPick) return false;
+  const img = getActiveImage();
+  if (img) {
+    update(s => { applyChromakey(s.images[img.id], null); });
+  }
+  currentHex = '';
+  currentTol = 25;
+  hasPendingPick = false;
+  if (panelEls) {
+    panelEls.hexInput.value = '';
+    panelEls.swatch.style.backgroundColor = '';
+    panelEls.tolInput.value = '25';
+    panelEls.tolReadout.textContent = '25';
+  }
+  return true;
 }
 
 // Test-only reset for browser specs.
@@ -430,6 +483,7 @@ export function _resetForTest() {
   panelEls = null;
   currentHex = '';
   currentTol = 25;
+  hasPendingPick = false;
   downPos = null;
   if (pendingFlush != null) {
     cancelAnimationFrame(pendingFlush);

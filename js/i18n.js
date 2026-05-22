@@ -72,7 +72,7 @@ export const TRANSLATIONS = {
 
     // --- Batch panel -------------------------------------------------------
     batchPanelLabel:          'Batch operations',
-    batchApplyToAll:          'Apply to all',
+    batchApplyToAll:          'Batch mode — click an image to edit it individually',
     batchSectionResize:       'Resize',
     batchSectionRotate:       'Rotate / Flip',
     batchSectionAdjust:       'Adjust',
@@ -152,6 +152,9 @@ export const TRANSLATIONS = {
     editorToolShape:          'Shape',
     editorToolRedact:         'Redact',
     editorToolEyedropper:     'Eyedropper',
+    editorToolPan:            'Pan',
+    editorToolPanTip:         'Pan — drag to move when zoomed in (or hold Space + drag from any tool)',
+    editorToolEyedropperTip:  'Select a color to make transparent',
     editorToolBgRemove:       'Remove background',
     editorUndo:               'Undo',
     editorRedo:               'Redo',
@@ -601,7 +604,7 @@ export const TRANSLATIONS = {
 
     // --- Batch panel -------------------------------------------------------
     batchPanelLabel:          'Operaciones por lotes',
-    batchApplyToAll:          'Aplicar a todo',
+    batchApplyToAll:          'Modo por lotes — haz clic en una imagen para editarla individualmente',
     batchSectionResize:       'Redimensionar',
     batchSectionRotate:       'Rotar / Voltear',
     batchSectionAdjust:       'Ajustar',
@@ -677,6 +680,9 @@ export const TRANSLATIONS = {
     editorToolShape:          'Forma',
     editorToolRedact:         'Censurar',
     editorToolEyedropper:     'Cuentagotas',
+    editorToolPan:            'Mover',
+    editorToolPanTip:         'Mover — arrastra para desplazar al ampliar (o mantén Espacio + arrastra desde cualquier herramienta)',
+    editorToolEyedropperTip:  'Selecciona un color para hacer transparente',
     editorToolBgRemove:       'Quitar fondo',
     editorUndo:               'Deshacer',
     editorRedo:               'Rehacer',
@@ -1087,7 +1093,7 @@ export const TRANSLATIONS = {
 
     // --- Batch panel -------------------------------------------------------
     batchPanelLabel:          'Stapel­operationen',
-    batchApplyToAll:          'Auf alle anwenden',
+    batchApplyToAll:          'Stapelmodus — klicke auf ein Bild, um es einzeln zu bearbeiten',
     batchSectionResize:       'Größe',
     batchSectionRotate:       'Drehen / Spiegeln',
     batchSectionAdjust:       'Anpassen',
@@ -1163,6 +1169,9 @@ export const TRANSLATIONS = {
     editorToolShape:          'Form',
     editorToolRedact:         'Schwärzen',
     editorToolEyedropper:     'Pipette',
+    editorToolPan:            'Verschieben',
+    editorToolPanTip:         'Verschieben — Ziehen, um beim Hineinzoomen zu bewegen (oder Leertaste + Ziehen aus jedem Werkzeug)',
+    editorToolEyedropperTip:  'Eine Farbe auswählen, die transparent gemacht wird',
     editorToolBgRemove:       'Hintergrund entfernen',
     editorUndo:               'Rückgängig',
     editorRedo:               'Wiederholen',
@@ -1573,7 +1582,7 @@ export const TRANSLATIONS = {
 
     // --- Batch panel -------------------------------------------------------
     batchPanelLabel:          'Opérations par lots',
-    batchApplyToAll:          'Appliquer à tout',
+    batchApplyToAll:          'Mode par lot — cliquez sur une image pour la modifier individuellement',
     batchSectionResize:       'Redimensionner',
     batchSectionRotate:       'Pivoter / Retourner',
     batchSectionAdjust:       'Ajuster',
@@ -1649,6 +1658,9 @@ export const TRANSLATIONS = {
     editorToolShape:          'Forme',
     editorToolRedact:         'Masquer',
     editorToolEyedropper:     'Pipette',
+    editorToolPan:            'Déplacer',
+    editorToolPanTip:         'Déplacer — glissez pour bouger quand zoomé (ou maintenez Espace + glissez depuis n’importe quel outil)',
+    editorToolEyedropperTip:  'Sélectionnez une couleur à rendre transparente',
     editorToolBgRemove:       'Retirer l’arrière-plan',
     editorUndo:               'Annuler',
     editorRedo:               'Refaire',
@@ -2059,7 +2071,7 @@ export const TRANSLATIONS = {
 
     // --- Batch panel -------------------------------------------------------
     batchPanelLabel:          'Operazioni batch',
-    batchApplyToAll:          'Applica a tutto',
+    batchApplyToAll:          'Modalità batch — clicca un’immagine per modificarla singolarmente',
     batchSectionResize:       'Ridimensiona',
     batchSectionRotate:       'Ruota / Capovolgi',
     batchSectionAdjust:       'Regola',
@@ -2135,6 +2147,9 @@ export const TRANSLATIONS = {
     editorToolShape:          'Forma',
     editorToolRedact:         'Oscura',
     editorToolEyedropper:     'Contagocce',
+    editorToolPan:            'Sposta',
+    editorToolPanTip:         'Sposta — trascina per muovere quando ingrandito (o tieni premuto Spazio + trascina da qualsiasi strumento)',
+    editorToolEyedropperTip:  'Seleziona un colore da rendere trasparente',
     editorToolBgRemove:       'Rimuovi sfondo',
     editorUndo:               'Annulla',
     editorRedo:               'Ripeti',
@@ -2545,7 +2560,7 @@ export const TRANSLATIONS = {
 
     // --- Batch panel -------------------------------------------------------
     batchPanelLabel:          'Operações em lote',
-    batchApplyToAll:          'Aplicar a tudo',
+    batchApplyToAll:          'Modo em lote — clique numa imagem para editá-la individualmente',
     batchSectionResize:       'Redimensionar',
     batchSectionRotate:       'Girar / Espelhar',
     batchSectionAdjust:       'Ajustar',
@@ -2621,6 +2636,9 @@ export const TRANSLATIONS = {
     editorToolShape:          'Forma',
     editorToolRedact:         'Censurar',
     editorToolEyedropper:     'Conta-gotas',
+    editorToolPan:            'Mover',
+    editorToolPanTip:         'Mover — arraste para mover quando ampliado (ou segure Espaço + arraste de qualquer ferramenta)',
+    editorToolEyedropperTip:  'Selecione uma cor para tornar transparente',
     editorToolBgRemove:       'Remover fundo',
     editorUndo:               'Desfazer',
     editorRedo:               'Refazer',
@@ -3031,7 +3049,7 @@ export const TRANSLATIONS = {
 
     // --- Batch panel -------------------------------------------------------
     batchPanelLabel:          'Batchbewerkingen',
-    batchApplyToAll:          'Op alles toepassen',
+    batchApplyToAll:          'Batchmodus — klik op een afbeelding om deze afzonderlijk te bewerken',
     batchSectionResize:       'Formaat',
     batchSectionRotate:       'Draaien / Spiegelen',
     batchSectionAdjust:       'Aanpassen',
@@ -3107,6 +3125,9 @@ export const TRANSLATIONS = {
     editorToolShape:          'Vorm',
     editorToolRedact:         'Onleesbaar',
     editorToolEyedropper:     'Pipet',
+    editorToolPan:            'Verplaatsen',
+    editorToolPanTip:         'Verplaatsen — sleep om te bewegen bij inzoomen (of houd Spatie + sleep vanuit elke tool)',
+    editorToolEyedropperTip:  'Selecteer een kleur om transparant te maken',
     editorToolBgRemove:       'Achtergrond verwijderen',
     editorUndo:               'Ongedaan maken',
     editorRedo:               'Opnieuw',
@@ -3517,7 +3538,7 @@ export const TRANSLATIONS = {
 
     // --- Batch panel -------------------------------------------------------
     batchPanelLabel:          'Operacje wsadowe',
-    batchApplyToAll:          'Zastosuj do wszystkich',
+    batchApplyToAll:          'Tryb wsadowy — kliknij obraz, aby edytować go indywidualnie',
     batchSectionResize:       'Rozmiar',
     batchSectionRotate:       'Obróć / Odbij',
     batchSectionAdjust:       'Dopasuj',
@@ -3593,6 +3614,9 @@ export const TRANSLATIONS = {
     editorToolShape:          'Kształt',
     editorToolRedact:         'Zasłoń',
     editorToolEyedropper:     'Kroplomierz',
+    editorToolPan:            'Przesuń',
+    editorToolPanTip:         'Przesuń — przeciągnij, aby przesunąć po przybliżeniu (lub przytrzymaj Spację + przeciągaj z dowolnego narzędzia)',
+    editorToolEyedropperTip:  'Wybierz kolor, który ma stać się przezroczysty',
     editorToolBgRemove:       'Usuń tło',
     editorUndo:               'Cofnij',
     editorRedo:               'Ponów',
@@ -4003,7 +4027,7 @@ export const TRANSLATIONS = {
 
     // --- Batch panel -------------------------------------------------------
     batchPanelLabel:          'バッチ操作',
-    batchApplyToAll:          'すべてに適用',
+    batchApplyToAll:          'バッチモード — 画像をクリックすると個別に編集できます',
     batchSectionResize:       'リサイズ',
     batchSectionRotate:       '回転 / 反転',
     batchSectionAdjust:       '調整',
@@ -4079,6 +4103,9 @@ export const TRANSLATIONS = {
     editorToolShape:          '図形',
     editorToolRedact:         '墨消し',
     editorToolEyedropper:     'スポイト',
+    editorToolPan:            'パン',
+    editorToolPanTip:         'パン — ズーム時にドラッグして移動 (または任意のツールから Space + ドラッグ)',
+    editorToolEyedropperTip:  '透明にする色を選択',
     editorToolBgRemove:       '背景を除去',
     editorUndo:               '元に戻す',
     editorRedo:               'やり直し',
@@ -4489,7 +4516,7 @@ export const TRANSLATIONS = {
 
     // --- Batch panel -------------------------------------------------------
     batchPanelLabel:          '批量操作',
-    batchApplyToAll:          '应用到所有',
+    batchApplyToAll:          '批量模式 — 点击图片可单独编辑',
     batchSectionResize:       '调整大小',
     batchSectionRotate:       '旋转 / 翻转',
     batchSectionAdjust:       '调整',
@@ -4565,6 +4592,9 @@ export const TRANSLATIONS = {
     editorToolShape:          '形状',
     editorToolRedact:         '遮蔽',
     editorToolEyedropper:     '吸管',
+    editorToolPan:            '平移',
+    editorToolPanTip:         '平移 — 放大时拖动以移动（或在任意工具下按住 Space + 拖动）',
+    editorToolEyedropperTip:  '选择要变为透明的颜色',
     editorToolBgRemove:       '移除背景',
     editorUndo:               '撤销',
     editorRedo:               '重做',
@@ -4975,7 +5005,7 @@ export const TRANSLATIONS = {
 
     // --- Batch panel -------------------------------------------------------
     batchPanelLabel:          '일괄 작업',
-    batchApplyToAll:          '모두에 적용',
+    batchApplyToAll:          '일괄 모드 — 이미지를 클릭하여 개별 편집',
     batchSectionResize:       '크기 조정',
     batchSectionRotate:       '회전 / 뒤집기',
     batchSectionAdjust:       '조정',
@@ -5051,6 +5081,9 @@ export const TRANSLATIONS = {
     editorToolShape:          '도형',
     editorToolRedact:         '가리기',
     editorToolEyedropper:     '스포이트',
+    editorToolPan:            '이동',
+    editorToolPanTip:         '이동 — 확대 시 드래그하여 이동 (또는 어떤 도구에서든 Space + 드래그)',
+    editorToolEyedropperTip:  '투명하게 만들 색상 선택',
     editorToolBgRemove:       '배경 제거',
     editorUndo:               '실행 취소',
     editorRedo:               '다시 실행',
@@ -5461,7 +5494,7 @@ export const TRANSLATIONS = {
 
     // --- Batch panel -------------------------------------------------------
     batchPanelLabel:          'Пакетные операции',
-    batchApplyToAll:          'Применить ко всем',
+    batchApplyToAll:          'Пакетный режим — нажмите на изображение, чтобы редактировать его отдельно',
     batchSectionResize:       'Размер',
     batchSectionRotate:       'Поворот / Отражение',
     batchSectionAdjust:       'Настройка',
@@ -5537,6 +5570,9 @@ export const TRANSLATIONS = {
     editorToolShape:          'Фигура',
     editorToolRedact:         'Скрыть',
     editorToolEyedropper:     'Пипетка',
+    editorToolPan:            'Панорама',
+    editorToolPanTip:         'Панорама — перетаскивайте, чтобы переместить при увеличении (или удерживайте Пробел + перетаскивайте из любого инструмента)',
+    editorToolEyedropperTip:  'Выберите цвет, который станет прозрачным',
     editorToolBgRemove:       'Удалить фон',
     editorUndo:               'Отменить',
     editorRedo:               'Повторить',
@@ -5947,7 +5983,7 @@ export const TRANSLATIONS = {
 
     // --- Batch panel -------------------------------------------------------
     batchPanelLabel:          'عمليات الدفعة',
-    batchApplyToAll:          'تطبيق على الكل',
+    batchApplyToAll:          'وضع الدُفعة — انقر على صورة لتحريرها بشكل منفصل',
     batchSectionResize:       'تغيير الحجم',
     batchSectionRotate:       'تدوير / قلب',
     batchSectionAdjust:       'ضبط',
@@ -6023,6 +6059,9 @@ export const TRANSLATIONS = {
     editorToolShape:          'شكل',
     editorToolRedact:         'إخفاء',
     editorToolEyedropper:     'قطّارة',
+    editorToolPan:            'تحريك',
+    editorToolPanTip:         'تحريك — اسحب للتحريك عند التكبير (أو اضغط مع الاستمرار على Space + اسحب من أي أداة)',
+    editorToolEyedropperTip:  'اختر لونًا لجعله شفافًا',
     editorToolBgRemove:       'إزالة الخلفية',
     editorUndo:               'تراجع',
     editorRedo:               'إعادة',
@@ -6433,7 +6472,7 @@ export const TRANSLATIONS = {
 
     // --- Batch panel -------------------------------------------------------
     batchPanelLabel:          'बैच कार्य',
-    batchApplyToAll:          'सभी पर लागू करें',
+    batchApplyToAll:          'बैच मोड — किसी चित्र पर क्लिक करके उसे अलग से संपादित करें',
     batchSectionResize:       'आकार बदलें',
     batchSectionRotate:       'घुमाएँ / पलटें',
     batchSectionAdjust:       'समायोजित करें',
@@ -6509,6 +6548,9 @@ export const TRANSLATIONS = {
     editorToolShape:          'आकार',
     editorToolRedact:         'संशोधित',
     editorToolEyedropper:     'ड्रॉपर',
+    editorToolPan:            'पैन',
+    editorToolPanTip:         'पैन — ज़ूम होने पर खींचकर हिलाएँ (या किसी भी टूल से Space + खींचें)',
+    editorToolEyedropperTip:  'पारदर्शी बनाने के लिए रंग चुनें',
     editorToolBgRemove:       'पृष्ठभूमि हटाएँ',
     editorUndo:               'पूर्ववत',
     editorRedo:               'पुनः करें',
@@ -6919,7 +6961,7 @@ export const TRANSLATIONS = {
 
     // --- Batch panel -------------------------------------------------------
     batchPanelLabel:          'Toplu işlemler',
-    batchApplyToAll:          'Hepsine uygula',
+    batchApplyToAll:          'Toplu mod — bir görüntüye tıklayarak ayrı düzenleyin',
     batchSectionResize:       'Boyutlandır',
     batchSectionRotate:       'Döndür / Çevir',
     batchSectionAdjust:       'Ayarla',
@@ -6995,6 +7037,9 @@ export const TRANSLATIONS = {
     editorToolShape:          'Şekil',
     editorToolRedact:         'Sansürle',
     editorToolEyedropper:     'Damlalık',
+    editorToolPan:            'Kaydır',
+    editorToolPanTip:         'Kaydır — yakınlaştırıldığında sürükleyerek hareket ettir (veya herhangi bir araçtan Space + sürükle)',
+    editorToolEyedropperTip:  'Şeffaf yapılacak rengi seçin',
     editorToolBgRemove:       'Arka planı kaldır',
     editorUndo:               'Geri al',
     editorRedo:               'Yinele',

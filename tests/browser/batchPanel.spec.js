@@ -261,11 +261,16 @@ test('batch badge clears when user edits the image in the editor', async ({ page
     return getState().queue[0];
   });
 
-  // Simulate a per-image edit via state.update — same call path as the editor.
+  // Simulate a per-image edit via the same history wrapper the editor uses.
+  // v1.1.1: bg-pill clearing moved from a value-diffing subscriber to
+  // explicit flag-management inside the single-image history wrappers, so
+  // the test must exercise the actual editor path (was bypassing it).
   await page.evaluate(async (id) => {
-    const { update } = await import('/js/state.js');
+    const { withAdjustHistory } = await import('/js/historyOps.js');
     const { applyAdjust } = await import('/js/ops/adjust.js');
-    update(s => { applyAdjust(s.images[id], 'brightness', 30); });
+    withAdjustHistory('Adjust brightness', id, s => {
+      applyAdjust(s.images[id], 'brightness', 30);
+    });
   }, firstId);
 
   // First thumb's badge should have cleared, second's should remain.

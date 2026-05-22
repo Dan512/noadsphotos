@@ -69,6 +69,11 @@ const DATA_I18N_RE   = /\bdata-i18n(?!-)\s*=\s*["']([a-zA-Z][a-zA-Z0-9_-]*)["']/
 const DATASET_I18N_RE = /\.dataset\.i18n\s*=\s*['"]([a-zA-Z][a-zA-Z0-9_-]*)['"]/g;
 const T_CALL_RE      = /\bt\(\s*['"]([a-zA-Z][a-zA-Z0-9_-]*)['"]/g;
 const I18N_PROP_RE   = /\bi18n\s*:\s*['"]([a-zA-Z][a-zA-Z0-9_-]*)['"]/g;
+// `tipKey: 'editorToolFooTip'` — used in editor.js TOOLS descriptors for
+// longer tooltips that explain what the tool does. The loop reads
+// `tool.tipKey` dynamically, so without this pattern the dead-key detector
+// would flag editorToolPanTip / editorToolEyedropperTip / etc. as orphans.
+const TIPKEY_PROP_RE = /\btipKey\s*:\s*['"]([a-zA-Z][a-zA-Z0-9_-]*)['"]/g;
 
 function collectFiles() {
   const out = [];
@@ -105,6 +110,7 @@ function extractKeys(content) {
   for (const m of content.matchAll(DATASET_I18N_RE)) keys.add(m[1]);
   for (const m of content.matchAll(T_CALL_RE))       keys.add(m[1]);
   for (const m of content.matchAll(I18N_PROP_RE))    keys.add(m[1]);
+  for (const m of content.matchAll(TIPKEY_PROP_RE))  keys.add(m[1]);
   return keys;
 }
 

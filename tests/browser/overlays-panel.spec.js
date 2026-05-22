@@ -68,14 +68,15 @@ async function addOverlayDirect(page, imgId, props = {}) {
 
 // --- tests --------------------------------------------------------------
 
-test('overlays panel: empty state visible when no overlays', async ({ page }) => {
+test('overlays panel: whole section hidden when image has no overlays (v1.1.1)', async ({ page }) => {
+  // v1.1.1 change: the Overlays section is contextual. With zero overlays on
+  // the active image, the entire #panel-overlays <details> element is
+  // hidden so the panel doesn't waste vertical space on an empty section.
+  // It reappears the moment an overlay is added (covered by the next test).
   await resetApp(page);
   await setupEditorWithImage(page);
 
-  await expect(page.locator('#panel-overlays .overlay-empty')).toBeVisible();
-  await expect(page.locator('#panel-overlays .overlay-empty')).toHaveText(
-    'No overlays yet. Use a tool to add one.',
-  );
+  await expect(page.locator('#panel-overlays')).toBeHidden();
   await expect(page.locator('#panel-overlays .overlay-row')).toHaveCount(0);
 });
 

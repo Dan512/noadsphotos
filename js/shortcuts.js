@@ -18,6 +18,8 @@
 // initShortcuts() is idempotent so main.js can call it freely.
 
 import { undo, redo } from './history.js';
+import { cancelActiveToolInProgress } from './toolCancel.js';
+import { activatePanTemporarily, deactivatePanTemporarily } from './tools/panTool.js';
 
 let installed = false;
 let detach = null;
@@ -31,7 +33,23 @@ export function initShortcuts() {
   if (installed) return detach;
   installed = true;
 
+  // Space-held pan accelerator. While Space is held, any tool's drag-on-canvas
+  // becomes a pan instead of the tool's normal behavior. Matches Photoshop /
+  // Figma muscle memory. Releasing Space restores the previous tool.
+  let spaceHeld = false;
+
   const onKey = (e) => {
+    // Space accelerator: process BEFORE the editing-target check, but skip if
+    // the user is typing — they need Space for, well, spaces.
+    if (e.code === 'Space' && !isEditingTarget(e.target)) {
+      if (!spaceHeld) {
+        spaceHeld = true;
+        activatePanTemporarily();
+      }
+      e.preventDefault();
+      return;
+    }
+
     // Don't hijack typing in form controls or contenteditable.
     if (isEditingTarget(e.target)) return;
 
@@ -49,7 +67,14 @@ export function initShortcuts() {
           e.stopPropagation();
         }
       } else {
-        if (undo()) {
+        // v1.1.1: undo first tries to cancel any in-progress action in the
+        // active tool (e.g., an uncommitted eyedropper pick). Only if no
+        // tool has in-flight state do we fall through to history.undo().
+        // See js/toolCancel.js + design doc §9.
+        if (cancelActiveToolInProgress()) {
+          e.preventDefault();
+          e.stopPropagation();
+        } else if (undo()) {
           e.preventDefault();
           e.stopPropagation();
         }
@@ -66,9 +91,22 @@ export function initShortcuts() {
     }
   };
 
+  const onKeyUp = (e) => {
+    if (e.code === 'Space' && spaceHeld) {
+      spaceHeld = false;
+      deactivatePanTemporarily();
+    }
+  };
+
   document.addEventListener('keydown', onKey, true);
+  document.addEventListener('keyup', onKeyUp, true);
   detach = () => {
     document.removeEventListener('keydown', onKey, true);
+    document.removeEventListener('keyup', onKeyUp, true);
+    if (spaceHeld) {
+      spaceHeld = false;
+      deactivatePanTemporarily();
+    }
     installed = false;
     detach = null;
   };

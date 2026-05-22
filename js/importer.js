@@ -1,5 +1,6 @@
 // js/importer.js — drag/drop, paste, file input. Decodes, normalizes EXIF, oversize-warns, thumbnails, enqueues.
 import { addImage, createId, getActiveId, getQueue } from './queue.js';
+import { update } from './state.js';
 import { showToast } from './errors.js';
 import { escapeHtml } from './escape.js';
 import { t } from './i18n.js';
@@ -171,6 +172,26 @@ export async function importFiles(fileList, caps, lifecycle) {
       } catch (err) {
         console.error('importFiles: lifecycle.setWindow failed', err);
       }
+    }
+  }
+
+  // v1.1.1: when the user has imported only a single image AND the queue
+  // ends up with just one image total (i.e. they didn't append to an
+  // existing batch), drop them straight into the editor for that image.
+  // Multi-image imports stay on the queue view so the user can review
+  // thumbnails before choosing one to edit.
+  //
+  // We check the queue length AFTER imports complete so we honor both
+  // first-import and append-to-empty scenarios. If the user already had a
+  // queue going, we leave the view alone — they're in batch mode.
+  if (addedCount === 1) {
+    const queue = getQueue();
+    if (queue.length === 1) {
+      const onlyId = queue[0];
+      update(s => {
+        s.ui.activeImageId = onlyId;
+        s.ui.view = 'editor';
+      });
     }
   }
 }

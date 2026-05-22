@@ -9,6 +9,7 @@ import { initEditor } from './editor.js';
 import { initBottomSheet } from './bottomSheet.js';
 import { initPreviewRenderer } from './render/previewRenderer.js';
 import { initSelectTool } from './tools/selectTool.js';
+import { initPanTool } from './tools/panTool.js';
 import { initCropTool } from './tools/cropTool.js';
 import { initEyedropperTool } from './tools/eyedropperTool.js';
 import { initTextTool } from './tools/textTool.js';
@@ -65,6 +66,7 @@ async function boot() {
   setQueueViewContext({ lifecycle, caps });
   // Tools must initialise AFTER the editor mounts the side panel.
   initSelectTool();
+  initPanTool();
   initCropTool();
   initEyedropperTool(lifecycle);
   initTextTool();

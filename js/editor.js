@@ -19,6 +19,7 @@ import { computeTrimBake, applyTrimBakeToState } from './ops/trim.js';
 import { effectiveImageSize } from './geometry.js';
 import { removeOverlay, reorderOverlays } from './overlays.js';
 import { undo, redo, getHistoryStats, subscribeHistory, recordOp } from './history.js';
+import { cancelActiveToolInProgress } from './toolCancel.js';
 import {
   withTransformsHistory,
   withAdjustHistory,
@@ -40,14 +41,21 @@ import { hasMetadata } from './exif.js';
 
 // Tool list. Labels go through t() at render time; the i18n key is stored
 // alongside so render code can re-derive on language switch.
+// Tool descriptors. `i18n` keys the short label (button aria-label + visible
+// short title); optional `tipKey` keys a longer tooltip that explains what
+// the tool does (used for tools whose label alone doesn't convey their
+// purpose — eyedropper picks a chromakey color, pan only works when
+// zoomed-in, etc.). If `tipKey` is absent, the button's title falls back
+// to the short label.
 const TOOLS = [
   { id: 'select',     icon: '↖', i18n: 'editorToolSelect' },
+  { id: 'pan',        icon: '✋', i18n: 'editorToolPan',        tipKey: 'editorToolPanTip' },
   { id: 'crop',       icon: '▭', i18n: 'editorToolCrop' },
   { id: 'text',       icon: 'T',      i18n: 'editorToolText' },
   { id: 'brush',      icon: '✎', i18n: 'editorToolBrush' },
   { id: 'shape',      icon: '◯', i18n: 'editorToolShape' },
   { id: 'redact',     icon: '▦', i18n: 'editorToolRedact' },
-  { id: 'eyedropper', icon: '⌖', i18n: 'editorToolEyedropper' },
+  { id: 'eyedropper', icon: '⌖', i18n: 'editorToolEyedropper', tipKey: 'editorToolEyedropperTip' },
   { id: 'bg-remove',  icon: '✄', i18n: 'editorToolBgRemove' },
 ];
 
@@ -122,8 +130,28 @@ function buildShell() {
   srHeading.textContent = t('editorViewHeading');
 
   // Toolbar -----------------------------------------------------------------
+  //
+  // Layout: [← Queue] | [tool buttons] ... spacer ... [Undo] [Redo]
+  // The ← Queue sits at the far left (browser back-button convention).
+  // Undo/Redo are pushed to the far right by a flex spacer between them
+  // and the tool buttons.
   const toolbar = document.createElement('div');
   toolbar.className = 'editor-toolbar';
+
+  const backBtn = document.createElement('button');
+  backBtn.type = 'button';
+  backBtn.id = 'back-to-queue';
+  backBtn.setAttribute('aria-label', t('editorBackToQueue'));
+  backBtn.textContent = t('editorBackToQueueLabel');
+  backBtn.addEventListener('click', () => {
+    update(s => { s.ui.view = 'queue'; });
+  });
+  toolbar.appendChild(backBtn);
+
+  const leftDivider = document.createElement('span');
+  leftDivider.className = 'divider';
+  leftDivider.setAttribute('aria-hidden', 'true');
+  toolbar.appendChild(leftDivider);
 
   toolBtns = new Map();
   for (const tool of TOOLS) {
@@ -132,7 +160,11 @@ function buildShell() {
     btn.dataset.tool = tool.id;
     const label = t(tool.i18n);
     btn.setAttribute('aria-label', label);
-    btn.title = label;
+    // Title gets the longer explanation when one exists; otherwise the
+    // short label. Stored as dataset so re-translating on language switch
+    // can find the right key.
+    btn.title = tool.tipKey ? t(tool.tipKey) : label;
+    if (tool.tipKey) btn.dataset.tipKey = tool.tipKey;
     btn.textContent = tool.icon;
     btn.addEventListener('click', () => {
       update(s => { s.ui.activeTool = tool.id; });
@@ -141,10 +173,9 @@ function buildShell() {
     toolBtns.set(tool.id, btn);
   }
 
-  const divider = document.createElement('span');
-  divider.className = 'divider';
-  divider.setAttribute('aria-hidden', 'true');
-  toolbar.appendChild(divider);
+  const spacer = document.createElement('div');
+  spacer.className = 'spacer';
+  toolbar.appendChild(spacer);
 
   const undoBtn = document.createElement('button');
   undoBtn.type = 'button';
@@ -153,7 +184,13 @@ function buildShell() {
   undoBtn.title = t('editorUndo');
   undoBtn.textContent = '↶';
   undoBtn.disabled = true;
-  undoBtn.addEventListener('click', () => { undo(); });
+  undoBtn.addEventListener('click', () => {
+    // Mirror Ctrl+Z behavior: first try to cancel an in-progress tool
+    // action (e.g. uncommitted eyedropper pick). Only fall through to
+    // history.undo() when no tool has in-flight state. See toolCancel.js.
+    if (cancelActiveToolInProgress()) return;
+    undo();
+  });
   toolbar.appendChild(undoBtn);
   undoBtnEl = undoBtn;
 
@@ -168,21 +205,23 @@ function buildShell() {
   toolbar.appendChild(redoBtn);
   redoBtnEl = redoBtn;
 
-  const spacer = document.createElement('div');
-  spacer.className = 'spacer';
-  toolbar.appendChild(spacer);
-
-  const backBtn = document.createElement('button');
-  backBtn.type = 'button';
-  backBtn.id = 'back-to-queue';
-  backBtn.setAttribute('aria-label', t('editorBackToQueue'));
-  backBtn.textContent = t('editorBackToQueueLabel');
-  backBtn.addEventListener('click', () => {
-    update(s => { s.ui.view = 'queue'; });
-  });
-  toolbar.appendChild(backBtn);
-
   // Canvas frame ------------------------------------------------------------
+  //
+  // Structure (v1.1.1):
+  //   .canvas-area      ← non-scrolling, takes grid-area: canvas
+  //     .canvas-frame   ← scrolling container; image overflows on zoom-in
+  //       <canvases>
+  //       <progress overlay>
+  //     .zoom-controls  ← positioned absolute against .canvas-area, so it
+  //                       stays glued to the bottom-center of the visible
+  //                       frame even when the user pans a zoomed image
+  //
+  // Pre-v1.1.1 the zoom controls lived inside .canvas-frame, which meant
+  // they scrolled along with the canvas content when the image was bigger
+  // than the frame. See design doc §8.
+  const area = document.createElement('div');
+  area.className = 'canvas-area';
+
   const frame = document.createElement('div');
   frame.className = 'canvas-frame';
 
@@ -272,7 +311,11 @@ function buildShell() {
   zoomIn.addEventListener('click', () => stepZoom(1));
   zoomControls.appendChild(zoomIn);
 
-  frame.appendChild(zoomControls);
+  // Wrap the scrolling .canvas-frame + the non-scrolling .zoom-controls in a
+  // single .canvas-area that takes grid-area: canvas. The pill stays put
+  // when the user pans the zoomed canvas.
+  area.appendChild(frame);
+  area.appendChild(zoomControls);
 
   // Side panel --------------------------------------------------------------
   const panel = document.createElement('aside');
@@ -305,7 +348,7 @@ function buildShell() {
   }
 
   // Mount -------------------------------------------------------------------
-  editorEl.replaceChildren(srHeading, toolbar, frame, panel);
+  editorEl.replaceChildren(srHeading, toolbar, area, panel);
 
   // Wire the Resize and Adjust panel inputs. Done once at build time because
   // the panel bodies own their DOM regardless of activeTool.
@@ -2076,6 +2119,15 @@ function syncOverlaysPanel() {
   const { list, empty } = overlaysEls;
   const img = getActiveImage();
   const overlays = img && Array.isArray(img.overlays) ? img.overlays : [];
+
+  // v1.1.1: the Overlays section is now contextual — it only appears in the
+  // editor panel when the active image actually has overlays. When there are
+  // none, the whole <details id="panel-overlays"> element is hidden so the
+  // user isn't confused by an empty section taking up vertical space (was
+  // showing a "No overlays yet" placeholder before). Saved real estate
+  // matters more as v1.2 features start adding more sections to the panel.
+  const overlaysSection = document.getElementById('panel-overlays');
+  if (overlaysSection) overlaysSection.hidden = overlays.length === 0;
 
   if (overlays.length === 0) {
     list.replaceChildren();
