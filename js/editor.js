@@ -503,6 +503,20 @@ function buildResizePanel() {
   readout.textContent = t('resizeOutputEmpty');
   root.appendChild(readout);
 
+  // Apply button. Resize is "pending" in the DOM (mode/value/height inputs)
+  // until the user clicks Apply — at which point we write transforms.resize
+  // and refresh the preview canvas. The exception is "Revert to original"
+  // mode, which is a one-click action and bypasses the button (see the
+  // modeSel.change handler below). Disabled by default; enabled whenever the
+  // pending DOM values would actually change state.
+  const applyBtn = document.createElement('button');
+  applyBtn.type = 'button';
+  applyBtn.className = 'resize-apply';
+  applyBtn.textContent = t('resizeApplyBtn');
+  applyBtn.setAttribute('aria-label', t('resizeApplyAria'));
+  applyBtn.disabled = true;
+  root.appendChild(applyBtn);
+
   // --- Trim subsection (v1.1 Feature 3) -----------------------------------
   // Two buttons + a tolerance slider. The slider is only meaningful for the
   // "Trim background color" mode but we keep it always visible so the user
@@ -561,69 +575,184 @@ function buildResizePanel() {
   });
 
   resizePanelBody.replaceChildren(root);
-  resizeEls = { modeSel, valueLabel, valueInput, heightWrap, heightInput, lockWrap, lockChk, readout };
+  resizeEls = { modeSel, valueLabel, valueInput, heightWrap, heightInput, lockWrap, lockChk, readout, applyBtn };
 
-  // History capture for resize:
-  //   - mode select / lock checkbox: discrete actions, record per change.
-  //   - value / height inputs: focusin captures the before-snapshot,
-  //     focusout/change records the after-snapshot (one history entry per
-  //     edit session, not per keystroke).
+  // Pending-until-Apply model:
+  //   - mode/value/height/lock changes only update the DOM + readout
+  //     (computed against a temporary image clone — never writes state).
+  //   - Apply button commits the pending resize, records one history entry,
+  //     and marks the canvas dirty so the preview re-renders.
+  //   - Exception: picking "Revert to original" (mode === 'free') is an
+  //     instant action — it clears transforms.resize on the spot.
   modeSel.addEventListener('change', () => {
-    captureResizeBefore();
-    onResizeInput();
-    commitResizeHistory('Resize mode');
+    const mode = modeSel.value;
+    // Show/hide height + lock rows based on mode.
+    heightWrap.hidden = mode !== 'exact';
+    lockWrap.hidden = mode !== 'exact';
+    if (mode === 'free') {
+      // Instant action: clear any existing resize from state.
+      const img = getActiveImage();
+      if (img && img.transforms.resize) {
+        const before = JSON.parse(JSON.stringify(img.transforms));
+        update(s => { applyResize(s.images[img.id], null); });
+        const after = JSON.parse(JSON.stringify(getState().images[img.id].transforms));
+        recordOp({
+          label: 'Resize mode',
+          imageId: img.id,
+          kind: 'transforms',
+          before: { transforms: before },
+          after:  { transforms: after  },
+        });
+      }
+      // Clear the value input so the next non-free pick starts fresh.
+      valueInput.value = '';
+      heightInput.value = '';
+    }
+    refreshPendingResize();
   });
-  lockChk.addEventListener('change', () => {
-    // Toggling lock re-runs the constrain pass; pass valueInput as the
-    // trigger so Height gets recomputed from the Width (the more common
-    // expectation when the user enables lock).
-    onResizeInput(valueInput);
-  });
-  valueInput.addEventListener('focus', captureResizeBefore);
-  valueInput.addEventListener('input', () => onResizeInput(valueInput));
-  valueInput.addEventListener('change', () => commitResizeHistory('Resize'));
-  valueInput.addEventListener('blur',   () => commitResizeHistory('Resize'));
-  heightInput.addEventListener('focus', captureResizeBefore);
-  heightInput.addEventListener('input', () => onResizeInput(heightInput));
-  heightInput.addEventListener('change', () => commitResizeHistory('Resize'));
-  heightInput.addEventListener('blur',   () => commitResizeHistory('Resize'));
+  lockChk.addEventListener('change', () => refreshPendingResize(valueInput));
+  valueInput.addEventListener('input', () => refreshPendingResize(valueInput));
+  heightInput.addEventListener('input', () => refreshPendingResize(heightInput));
+  applyBtn.addEventListener('click', applyPendingResize);
 }
 
-// --- Resize history capture: one entry per edit session ------------------
-// We snapshot the image's transforms BEFORE the first input event in a
-// session (focusin), then record on focusout / change. This keeps slider /
-// number-stepper drags from producing a hundred history entries.
+// Compute the resize payload encoded in the panel DOM (mode + value + optional
+// height), applying the aspect-lock recompute pass. Returns:
+//   - { mode, value, [height] }  → ready to send to applyResize()
+//   - 'free'                     → user picked "Revert to original"
+//   - null                       → mode picked but value missing/invalid
+// `triggerEl` is the input element that just changed, used for which side
+// drives the aspect-lock recompute in Exact mode.
+function readPendingResize(triggerEl) {
+  if (!resizeEls) return null;
+  const mode = resizeEls.modeSel.value;
+  if (mode === 'free') return 'free';
+  const value = Number(resizeEls.valueInput.value);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  const payload = { mode, value };
+  if (mode === 'exact') {
+    let heightVal = Number(resizeEls.heightInput.value);
+    if (!Number.isFinite(heightVal) || heightVal <= 0) heightVal = value;
+    payload.height = heightVal;
+    if (resizeEls.lockChk && resizeEls.lockChk.checked) {
+      const img = getActiveImage();
+      const sw = img && img.source ? (img.source.width  || 0) : 0;
+      const sh = img && img.source ? (img.source.height || 0) : 0;
+      if (sw > 0 && sh > 0) {
+        const aspect = sw / sh;
+        if (triggerEl === resizeEls.heightInput) {
+          payload.value = Math.max(1, Math.round(payload.height * aspect));
+          if (document.activeElement !== resizeEls.valueInput) {
+            resizeEls.valueInput.value = String(payload.value);
+          }
+        } else {
+          payload.height = Math.max(1, Math.round(payload.value / aspect));
+          if (document.activeElement !== resizeEls.heightInput) {
+            resizeEls.heightInput.value = String(payload.height);
+          }
+        }
+      }
+    }
+  }
+  return payload;
+}
 
-let resizeHistoryImageId = null;
-let resizeHistoryBefore = null;
-
-function captureResizeBefore() {
+// Update the Output readout to reflect what the pending DOM values would
+// produce when applied — by cloning the active image's transforms and
+// inserting the pending resize, then asking effectiveImageSize for dims.
+// Also toggles the Apply button enabled-state based on whether the pending
+// payload actually differs from the image's current transforms.resize.
+function refreshPendingResize(triggerEl) {
+  if (!resizeEls) return;
   const img = getActiveImage();
-  if (!img) { resizeHistoryImageId = null; resizeHistoryBefore = null; return; }
-  resizeHistoryImageId = img.id;
-  // Deep snapshot transforms so subsequent live edits don't mutate it.
-  resizeHistoryBefore = JSON.parse(JSON.stringify(img.transforms));
+  const pending = readPendingResize(triggerEl);
+
+  // Disable Apply when there's no image, an incomplete pending payload, or
+  // when the pending payload matches the image's current resize (or matches
+  // "no resize" for the free case).
+  let enableApply = false;
+  if (img && pending !== null) {
+    const current = img.transforms.resize || null;
+    if (pending === 'free') {
+      enableApply = current !== null;
+    } else if (!current) {
+      enableApply = true;
+    } else if (current.mode !== pending.mode || current.value !== pending.value) {
+      enableApply = true;
+    } else if (pending.mode === 'exact' && current.height !== pending.height) {
+      enableApply = true;
+    }
+  }
+  resizeEls.applyBtn.disabled = !enableApply;
+
+  // Readout reflects what export will produce IF the user clicks Apply
+  // (or what export will produce given current state if Apply is disabled).
+  if (!img) {
+    resizeEls.readout.textContent = t('resizeOutputEmpty');
+    return;
+  }
+  let effectiveImg = img;
+  if (pending && pending !== 'free') {
+    effectiveImg = {
+      ...img,
+      transforms: { ...img.transforms, resize: pending },
+    };
+  } else if (pending === 'free') {
+    effectiveImg = {
+      ...img,
+      transforms: { ...img.transforms, resize: null },
+    };
+  }
+  const dims = effectiveImageSize(effectiveImg);
+  if (dims.w > 0 && dims.h > 0) {
+    resizeEls.readout.textContent = t('resizeOutput', { w: Math.round(dims.w), h: Math.round(dims.h) });
+  } else {
+    resizeEls.readout.textContent = t('resizeOutputEmpty');
+  }
 }
 
-function commitResizeHistory(label) {
-  if (!resizeHistoryImageId || !resizeHistoryBefore) return;
-  const id = resizeHistoryImageId;
-  const before = resizeHistoryBefore;
-  resizeHistoryImageId = null;
-  resizeHistoryBefore = null;
-
-  const img = getState().images[id];
+// Commit the pending resize to state. Snapshots transforms before/after so
+// one history entry undoes the whole apply (mode + value + height in one go).
+// After commit, force a preview re-render by marking the active image dirty.
+function applyPendingResize() {
+  if (!resizeEls) return;
+  const img = getActiveImage();
   if (!img) return;
-  const after = JSON.parse(JSON.stringify(img.transforms));
-  if (JSON.stringify(before) === JSON.stringify(after)) return;
+  const pending = readPendingResize();
+  if (pending === null) return;
+
+  const before = JSON.parse(JSON.stringify(img.transforms));
+  update(s => {
+    const target = s.images[img.id];
+    if (!target) return;
+    if (pending === 'free') {
+      applyResize(target, null);
+    } else {
+      applyResize(target, pending);
+    }
+    // Force preview to re-render at the new output dimensions.
+    target.baseDirty = true;
+    target.overlaysDirty = true;
+  });
+  const after = JSON.parse(JSON.stringify(getState().images[img.id].transforms));
+
+  // No-op guard: if the before and after match (e.g., the user clicked Apply
+  // a second time with the same values), skip the history entry + toast.
+  if (JSON.stringify(before) === JSON.stringify(after)) {
+    resizeEls.applyBtn.disabled = true;
+    return;
+  }
 
   recordOp({
-    label,
-    imageId: id,
+    label: 'Apply resize',
+    imageId: img.id,
     kind: 'transforms',
     before: { transforms: before },
     after:  { transforms: after  },
   });
+
+  showToast(t('editorToastResizeApplied'), { variant: 'info' });
+  resizeEls.applyBtn.disabled = true;
 }
 
 // --- Trim (v1.1 Feature 3): bake current edits + crop to content bbox ---
@@ -764,106 +893,64 @@ function getActiveImage() {
   return s.images[id] || null;
 }
 
-function onResizeInput(triggerEl) {
-  if (!resizeEls) return;
-  const img = getActiveImage();
-  if (!img) return;
-
-  const mode = resizeEls.modeSel.value;
-  // Height field + Lock checkbox are ONLY meaningful in Exact mode, where
-  // the user specifies both dimensions independently. Every other mode
-  // either preserves aspect implicitly (longestSide/shortestSide/width/
-  // height/percent) or does nothing at all (free).
-  resizeEls.heightWrap.hidden = mode !== 'exact';
-  resizeEls.lockWrap.hidden = mode !== 'exact';
-
-  if (mode === 'free') {
-    update(s => { applyResize(s.images[img.id], null); });
-    return;
-  }
-
-  const value = Number(resizeEls.valueInput.value);
-  if (!Number.isFinite(value) || value <= 0) {
-    // Invalid value — don't commit and don't sync (user is still typing).
-    // Just refresh the readout to show "—" until input is valid.
-    if (resizeEls.readout) resizeEls.readout.textContent = t('resizeOutputEmpty');
-    return;
-  }
-
-  const payload = { mode, value };
-  if (mode === 'exact') {
-    let heightVal = Number(resizeEls.heightInput.value);
-    if (!Number.isFinite(heightVal) || heightVal <= 0) heightVal = value;
-    payload.height = heightVal;
-
-    // If aspect lock is ON, the secondary dimension follows the source aspect
-    // ratio. Whichever field the user JUST edited drives the other one.
-    if (resizeEls.lockChk && resizeEls.lockChk.checked) {
-      const sw = img.source.width  || 0;
-      const sh = img.source.height || 0;
-      if (sw > 0 && sh > 0) {
-        const aspect = sw / sh;
-        if (triggerEl === resizeEls.heightInput) {
-          // User edited Height — recompute Width.
-          payload.value = Math.max(1, Math.round(payload.height * aspect));
-          // Reflect in the input without firing another input event.
-          if (document.activeElement !== resizeEls.valueInput) {
-            resizeEls.valueInput.value = String(payload.value);
-          }
-        } else {
-          // User edited Width (or the mode/lock toggled). Recompute Height.
-          payload.height = Math.max(1, Math.round(payload.value / aspect));
-          if (document.activeElement !== resizeEls.heightInput) {
-            resizeEls.heightInput.value = String(payload.height);
-          }
-        }
-      }
-    }
-  }
-  update(s => { applyResize(s.images[img.id], payload); });
-}
-
+// Pull state.transforms.resize into the panel DOM. Called whenever the active
+// image changes, an undo/redo flips state, or another panel commits a change
+// that effectively updates dimensions (crop, rotate). After syncing the DOM,
+// we re-run refreshPendingResize so the Apply button reflects whether the
+// DOM matches state (disabled when they're in sync, enabled otherwise).
 function syncResizePanel() {
   if (!resizeEls) return;
   const img = getActiveImage();
   if (!img) {
     resizeEls.readout.textContent = t('resizeOutputEmpty');
+    resizeEls.applyBtn.disabled = true;
     return;
   }
 
   const resize = img.transforms.resize;
   const focused = document.activeElement;
 
-  // Only force-sync the mode select when state has a resize and the dropdown
-  // doesn't match. When state has no resize, leave the dropdown alone — the
-  // user may have just picked a mode and not yet entered a value.
+  // Only force-sync inputs the user isn't currently editing. We also bypass
+  // the sync entirely while the user has any of the resize controls focused,
+  // so undo/redo from elsewhere doesn't trample mid-edit values. (The Apply
+  // button still re-evaluates below.)
+  const userIsEditing =
+    focused === resizeEls.modeSel ||
+    focused === resizeEls.valueInput ||
+    focused === resizeEls.heightInput;
+
   if (resize) {
     if (resizeEls.modeSel.value !== resize.mode && focused !== resizeEls.modeSel) {
       resizeEls.modeSel.value = resize.mode;
     }
-    // Height + Lock are only meaningful in Exact mode (see onResizeInput
+    // Height + Lock are only meaningful in Exact mode (see readPendingResize
     // for the rationale).
     resizeEls.heightWrap.hidden = resize.mode !== 'exact';
     resizeEls.lockWrap.hidden = resize.mode !== 'exact';
-    if (focused !== resizeEls.valueInput) {
+    if (!userIsEditing && focused !== resizeEls.valueInput) {
       resizeEls.valueInput.value = String(resize.value ?? '');
     }
-    if (focused !== resizeEls.heightInput && resize.mode === 'exact') {
+    if (!userIsEditing && focused !== resizeEls.heightInput && resize.mode === 'exact') {
       resizeEls.heightInput.value = String(resize.height ?? '');
     }
+  } else if (!userIsEditing) {
+    // No resize stored AND user isn't editing. Reset the panel to "free".
+    // (If the user is mid-edit, leave their pending values alone — Apply
+    // hasn't been clicked yet.)
+    if (focused !== resizeEls.modeSel) resizeEls.modeSel.value = 'free';
+    resizeEls.valueInput.value = '';
+    resizeEls.heightInput.value = '';
+    resizeEls.heightWrap.hidden = true;
+    resizeEls.lockWrap.hidden = true;
   } else {
-    // No resize stored. Show/hide is driven by current select value.
+    // No resize in state, user is mid-edit — leave DOM alone. Just sync the
+    // height/lock visibility against the dropdown so it stays consistent.
     const cur = resizeEls.modeSel.value;
     resizeEls.heightWrap.hidden = cur !== 'exact';
     resizeEls.lockWrap.hidden = cur !== 'exact';
   }
 
-  const dims = effectiveImageSize(img);
-  if (dims.w > 0 && dims.h > 0) {
-    resizeEls.readout.textContent = t('resizeOutput', { w: Math.round(dims.w), h: Math.round(dims.h) });
-  } else {
-    resizeEls.readout.textContent = t('resizeOutputEmpty');
-  }
+  refreshPendingResize();
 }
 
 // --------------------------------------------------------------------------

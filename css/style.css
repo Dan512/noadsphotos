@@ -805,6 +805,29 @@ main#workspace:has(> #editor-view:not([hidden])) {
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
+/* Apply button for the single-image Resize panel. Mirrors the .resize-trim
+   button styling so it visually belongs to the same group, but uses the
+   accent color when enabled so the user sees a clear call-to-action. */
+.editor-panel .resize-apply {
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: var(--accent-contrast);
+  border-radius: var(--radius-control);
+  font: inherit;
+  cursor: pointer;
+  margin-top: var(--space-xs);
+}
+.editor-panel .resize-apply:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+.editor-panel .resize-apply:disabled {
+  background: var(--surface-2);
+  border-color: var(--border);
+  color: var(--text-muted);
+  cursor: default;
+  opacity: 0.7;
+}
 .editor-panel .rotate-group,
 .editor-panel .flip-group {
   display: flex;

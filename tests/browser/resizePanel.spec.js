@@ -51,7 +51,7 @@ test('resize panel: appears as a "Resize" details section', async ({ page }) => 
   await expect(page.locator('#panel-resize .resize-mode')).toBeVisible();
 });
 
-test('resize panel: choosing longestSide stores resize on state', async ({ page }) => {
+test('resize panel: clicking Apply stores resize on state', async ({ page }) => {
   await resetApp(page);
   const id = await setupEditorWithImage(page, 800, 400);
 
@@ -59,16 +59,25 @@ test('resize panel: choosing longestSide stores resize on state', async ({ page 
   await page.locator('#panel-resize .resize-value').fill('400');
   await page.locator('#panel-resize .resize-value').dispatchEvent('input');
 
-  const resize = await page.evaluate(async (id) => {
+  // Pending-until-Apply: state should still be null before the click.
+  const before = await page.evaluate(async (id) => {
     const { getState } = await import('/js/state.js');
     return getState().images[id].transforms.resize;
   }, id);
-  expect(resize).not.toBeNull();
-  expect(resize.mode).toBe('longestSide');
-  expect(resize.value).toBe(400);
+  expect(before).toBeNull();
+
+  await page.locator('#panel-resize .resize-apply').click();
+
+  const after = await page.evaluate(async (id) => {
+    const { getState } = await import('/js/state.js');
+    return getState().images[id].transforms.resize;
+  }, id);
+  expect(after).not.toBeNull();
+  expect(after.mode).toBe('longestSide');
+  expect(after.value).toBe(400);
 });
 
-test('resize panel: readout updates to predicted dims', async ({ page }) => {
+test('resize panel: readout updates to predicted dims (pending, before Apply)', async ({ page }) => {
   await resetApp(page);
   await setupEditorWithImage(page, 800, 400);
 
@@ -76,20 +85,22 @@ test('resize panel: readout updates to predicted dims', async ({ page }) => {
   await page.locator('#panel-resize .resize-value').fill('400');
   await page.locator('#panel-resize .resize-value').dispatchEvent('input');
 
-  // Output should be 400 × 200 (long side scales 800 → 400, ratio preserved).
+  // Output reflects the pending pick (400 × 200), even though Apply hasn't
+  // been clicked yet — readout is the user's preview of what export will do.
   await expect(page.locator('#panel-resize .resize-readout')).toHaveText(/400.*200/);
 });
 
-test('resize panel: choosing Free clears resize', async ({ page }) => {
+test('resize panel: choosing Free clears resize immediately', async ({ page }) => {
   await resetApp(page);
   const id = await setupEditorWithImage(page);
 
-  // First set a resize.
+  // First set a resize via Apply.
   await page.locator('#panel-resize .resize-mode').selectOption('longestSide');
   await page.locator('#panel-resize .resize-value').fill('400');
   await page.locator('#panel-resize .resize-value').dispatchEvent('input');
+  await page.locator('#panel-resize .resize-apply').click();
 
-  // Then clear it.
+  // Free mode bypasses the Apply button (it's a one-click action).
   await page.locator('#panel-resize .resize-mode').selectOption('free');
 
   const resize = await page.evaluate(async (id) => {
@@ -107,7 +118,7 @@ test('resize panel: exact mode shows the height input', async ({ page }) => {
   await expect(page.locator('#panel-resize .resize-height-row')).toBeVisible();
 });
 
-test('resize panel: resize does NOT affect the live preview canvas size', async ({ page }) => {
+test('resize panel: typing alone does NOT change the canvas (state is pending)', async ({ page }) => {
   await resetApp(page);
   await setupEditorWithImage(page, 800, 400);
 
@@ -117,22 +128,70 @@ test('resize panel: resize does NOT affect the live preview canvas size', async 
 
   const sizeBefore = await page.evaluate(() => {
     const c = document.getElementById('base-canvas');
-    return { w: c.width, h: c.height, cssW: c.style.width, cssH: c.style.height };
+    return { w: c.width, h: c.height };
   });
 
   await page.locator('#panel-resize .resize-mode').selectOption('longestSide');
   await page.locator('#panel-resize .resize-value').fill('100');
   await page.locator('#panel-resize .resize-value').dispatchEvent('input');
 
-  // Wait a couple of frames for the renderer.
+  // Wait a couple of frames so any (incorrect) re-render would land.
   await page.waitForTimeout(120);
 
   const sizeAfter = await page.evaluate(() => {
     const c = document.getElementById('base-canvas');
-    return { w: c.width, h: c.height, cssW: c.style.width, cssH: c.style.height };
+    return { w: c.width, h: c.height };
   });
 
-  // Canvas size unchanged by resize (resize is export-time).
+  // No Apply click yet → state hasn't been touched → canvas size unchanged.
   expect(sizeAfter.w).toBe(sizeBefore.w);
   expect(sizeAfter.h).toBe(sizeBefore.h);
+});
+
+test('resize panel: clicking Apply leaves the canvas painted (no blank)', async ({ page }) => {
+  // Sanity check that the pixelation pre-pass introduced for v1.1.1 doesn't
+  // accidentally clear the canvas. We don't try to assert "looks pixelated"
+  // here — a solid-color fixture has no visible degradation regardless. The
+  // important assertion is just that the centre pixel stays painted after
+  // the downsample-then-upsample round-trip kicks in.
+  await resetApp(page);
+  await setupEditorWithImage(page, 800, 400);
+
+  await expect.poll(async () => {
+    return await page.evaluate(() => document.getElementById('base-canvas')?.width || 0);
+  }, { timeout: 2000 }).toBeGreaterThan(0);
+
+  await page.locator('#panel-resize .resize-mode').selectOption('percent');
+  await page.locator('#panel-resize .resize-value').fill('5');
+  await page.locator('#panel-resize .resize-value').dispatchEvent('input');
+  await page.locator('#panel-resize .resize-apply').click();
+
+  await page.waitForTimeout(150);
+
+  const centerPixel = await page.evaluate(() => {
+    const c = document.getElementById('base-canvas');
+    const ctx = c.getContext('2d');
+    const px = ctx.getImageData(Math.floor(c.width / 2), Math.floor(c.height / 2), 1, 1).data;
+    return { r: px[0], g: px[1], b: px[2], a: px[3] };
+  });
+  expect(centerPixel.a).toBeGreaterThan(0);
+  expect(centerPixel.r).toBeGreaterThan(100); // still red-dominant
+});
+
+test('resize panel: Apply button is disabled until the user changes something', async ({ page }) => {
+  await resetApp(page);
+  await setupEditorWithImage(page, 800, 400);
+
+  // No edits yet → disabled.
+  await expect(page.locator('#panel-resize .resize-apply')).toBeDisabled();
+
+  // Pick mode + type a value → enabled.
+  await page.locator('#panel-resize .resize-mode').selectOption('longestSide');
+  await page.locator('#panel-resize .resize-value').fill('200');
+  await page.locator('#panel-resize .resize-value').dispatchEvent('input');
+  await expect(page.locator('#panel-resize .resize-apply')).toBeEnabled();
+
+  // Click Apply → state matches DOM → disabled again.
+  await page.locator('#panel-resize .resize-apply').click();
+  await expect(page.locator('#panel-resize .resize-apply')).toBeDisabled();
 });

@@ -21,6 +21,7 @@ import { drawShape } from '../ops/shape.js';
 import { drawRedact, applyRedactFx } from '../ops/redact.js';
 import { drawOverlaySync, getOverlayBounds } from '../overlays.js';
 import { getSetting } from '../settings.js';
+import { effectiveImageSize } from '../geometry.js';
 
 // Module-level registry of per-type overlay drawers. All four kinds are
 // registered upfront — they're cheap pure functions and avoiding dynamic
@@ -366,6 +367,11 @@ export function initPreviewRenderer(lifecycle, caps) {
   // 90°-multiple rotation. Used by sizeCanvases so the visible canvas
   // accommodates the rotated/cropped image. Non-90 rotations are passed
   // through as their bounding-box dims (matches geometry.rotateRect).
+  //
+  // Intentionally IGNORES transforms.resize — resize is shown to the user as
+  // pixelation via a downsample pre-pass in drawBase (see getResizedSource).
+  // The canvas itself stays at crop/rotate dimensions; only the bitmap data
+  // it draws is degraded to the resize output's pixel budget.
   function postTransformDims(img) {
     const crop = img.transforms.crop;
     let w = crop ? crop.w : img.source.width;
@@ -374,7 +380,6 @@ export function initPreviewRenderer(lifecycle, caps) {
     if (rot === 90 || rot === 270) {
       const tmp = w; w = h; h = tmp;
     } else if (rot !== 0 && rot !== 180) {
-      // Non-quarter rotation — compute bounding box.
       const rad = rot * Math.PI / 180;
       const cos = Math.abs(Math.cos(rad));
       const sin = Math.abs(Math.sin(rad));
@@ -505,7 +510,64 @@ export function initPreviewRenderer(lifecycle, caps) {
     // rotations the toolbar offers — the mapping stays axis-aligned.
     applyRedactsToBase(img, ds);
 
+    // Resize pixelation pre-pass. When `transforms.resize` shrinks the export
+    // output below the canvas's current data resolution, we downsample the
+    // base canvas to that smaller pixel count and then upsample it back with
+    // nearest-neighbor — giving the user an honest visual preview of what
+    // the export pixel budget looks like. Only applied when the resize's
+    // long-side output is strictly less than the bitmap's painted long side,
+    // because upsizing doesn't add pixelation.
+    applyResizePixelation(img, ds);
+
     return true;
+  }
+
+  // Scratch offscreen canvas for the resize-pixelation pass. Reused across
+  // frames; resized lazily when the export dims change. Module-local so the
+  // GC keeps it alive while previewRenderer is initialized.
+  let resizeScratchCanvas = null;
+
+  function applyResizePixelation(img, ds) {
+    if (!baseCtx || !ds) return;
+    const resize = img && img.transforms && img.transforms.resize;
+    if (!resize) return;
+    const finalDims = effectiveImageSize(img);
+    const eW = Math.max(1, Math.round(finalDims.w || 0));
+    const eH = Math.max(1, Math.round(finalDims.h || 0));
+    if (eW <= 0 || eH <= 0) return;
+    // Only pixelate when the export output is smaller than the bitmap-as-
+    // drawn into this canvas. Upsizing past the painted size doesn't add
+    // visible degradation, so skip the pass.
+    const paintedLong = Math.max(ds.drawW || 0, ds.drawH || 0);
+    const finalLong = Math.max(eW, eH);
+    if (finalLong >= paintedLong) return;
+
+    // Allocate or resize the scratch canvas to the export dims.
+    if (!resizeScratchCanvas || resizeScratchCanvas.width !== eW || resizeScratchCanvas.height !== eH) {
+      if (typeof OffscreenCanvas !== 'undefined') {
+        resizeScratchCanvas = new OffscreenCanvas(eW, eH);
+      } else {
+        resizeScratchCanvas = document.createElement('canvas');
+        resizeScratchCanvas.width = eW;
+        resizeScratchCanvas.height = eH;
+      }
+    }
+    const offCtx = resizeScratchCanvas.getContext('2d');
+    if (!offCtx) return;
+    offCtx.imageSmoothingEnabled = true;
+    offCtx.imageSmoothingQuality = 'high';
+    offCtx.clearRect(0, 0, eW, eH);
+    // Downsample the current canvas content to the export pixel budget.
+    offCtx.drawImage(baseCanvas, 0, 0, eW, eH);
+
+    // Upsample back to canvas with nearest-neighbor so pixelation is crisp
+    // and obvious. The user explicitly wants "very pixelated" at tiny resize
+    // values — bilinear upsampling would smear that signal.
+    baseCtx.setTransform(1, 0, 0, 1, 0, 0);
+    baseCtx.clearRect(0, 0, baseCanvas.width, baseCanvas.height);
+    baseCtx.imageSmoothingEnabled = false;
+    baseCtx.drawImage(resizeScratchCanvas, 0, 0, baseCanvas.width, baseCanvas.height);
+    baseCtx.imageSmoothingEnabled = true; // restore for any later draws this frame
   }
 
   // Apply each redact overlay's pixelate/blur effect to the base canvas in
