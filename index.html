@@ -24,6 +24,20 @@
   <link rel="apple-touch-icon" href="/img/apple-touch-icon.png" sizes="180x180">
   <link rel="stylesheet" href="css/style.css">
 
+  <!-- Build stamp. Bump VERSION on every deploy so you can verify in
+       DevTools console which version actually loaded. If you don't see
+       this exact string in the console after a hard refresh, you're
+       seeing a cached older version (browser, GitHub Pages CDN, or a
+       proxy in between).
+       Versioning convention: v{MAJOR}.{MINOR}.{PATCH} where PATCH is
+       zero-padded two digits — bump PATCH for every shipped change, no
+       matter how small. Reset PATCH when bumping MINOR. -->
+  <script>
+    window.__NOADSPHOTOS_VERSION__ = 'v1.2.01';
+    window.__NOADSPHOTOS_BUILD__ = window.__NOADSPHOTOS_VERSION__ + ' — 2026-05-23';
+    console.log('%c[NoAdsPhotos build] ' + window.__NOADSPHOTOS_BUILD__, 'color:#4a9; font-weight:600;');
+  </script>
+
   <!-- Open Graph (Facebook, LinkedIn, Discord, Slack previews) -->
   <meta property="og:title" content="NoAdsPhotos — Batch image editing in your browser">
   <meta property="og:description" content="Privacy-first browser image editor. Crop, resize, adjust, redact, remove backgrounds, batch-export to ZIP or PDF, import HEIC. Image files never leave your device.">
