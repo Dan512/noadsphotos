@@ -12,6 +12,26 @@ const state = {
   },
   queue:  [],
   images: Object.create(null),
+  // v1.2 Feature 7: find-duplicates mode. `active` toggles the find-mode
+  // UI (reordered queue + dark overlay on marked items + Remove button).
+  // Hashes themselves are cached on each image (image._hashes) so re-runs
+  // at a different sensitivity skip the worker step.
+  //
+  // sensitivity ∈ {'strict','normal','loose'} maps to a Hamming-distance
+  // threshold (see js/ops/dedupe.js SENSITIVITY_THRESHOLDS).
+  //
+  // clusters: [{ id, memberIds, keeperIds }, ...]
+  // markedIds: image IDs currently flagged for removal (subset of all
+  // memberIds across clusters; user can click thumbs to toggle).
+  // preFindOrder: snapshot of state.queue at the moment find-mode was
+  // entered; Ctrl+Z restores this to revert find-mode.
+  dedupe: {
+    active: false,
+    sensitivity: 'normal',
+    clusters: [],
+    markedIds: [],
+    preFindOrder: null,
+  },
   // export.pdf holds PDF-specific options surfaced when format === 'pdf'.
   // Margins are undefined by default — the renderer picks 0 for "fit" and
   // 36 for named paper sizes so the image isn't pressed against the edge.

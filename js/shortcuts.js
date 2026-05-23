@@ -20,6 +20,8 @@
 import { undo, redo } from './history.js';
 import { cancelActiveToolInProgress } from './toolCancel.js';
 import { activatePanTemporarily, deactivatePanTemporarily } from './tools/panTool.js';
+import { getState } from './state.js';
+import { cancelFindMode } from './dedupe.js';
 
 let installed = false;
 let detach = null;
@@ -71,7 +73,16 @@ export function initShortcuts() {
         // active tool (e.g., an uncommitted eyedropper pick). Only if no
         // tool has in-flight state do we fall through to history.undo().
         // See js/toolCancel.js + design doc §9.
-        if (cancelActiveToolInProgress()) {
+        //
+        // v1.2 Feature 7: ALSO check dedupe find-mode. If the user has
+        // entered find-duplicates mode without yet clicking Remove,
+        // Ctrl+Z exits that mode (restores queue order + clears marks)
+        // BEFORE falling through to in-tool cancel or global undo.
+        if (getState().dedupe.active) {
+          cancelFindMode();
+          e.preventDefault();
+          e.stopPropagation();
+        } else if (cancelActiveToolInProgress()) {
           e.preventDefault();
           e.stopPropagation();
         } else if (undo()) {

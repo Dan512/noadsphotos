@@ -36,10 +36,28 @@ import { applyBgRemoveBatch } from './ops/bgremove.js';
 import { t } from './i18n.js';
 import { getSetting } from './settings.js';
 import { renderThumbnail } from './render/exportRenderer.js';
+import {
+  findDuplicates,
+  cancelFindMode as _cancelFindMode,
+  setSensitivity as _setSensitivity,
+  toggleMarked as _toggleMarked,
+  removeMarkedDuplicates as _removeMarkedDuplicates,
+  restoreRemoved as _restoreRemoved,
+} from './dedupe.js';
+
+// Thin local wrappers so handler-site call sites read clearly.
+const runFindDuplicates       = findDuplicates;
+const cancelDedupeFindMode    = _cancelFindMode;
+const setDedupeSensitivity    = _setSensitivity;
+const toggleDedupeMark        = _toggleMarked;
+const removeMarkedDuplicates  = _removeMarkedDuplicates;
+const restoreDedupeSnapshot   = _restoreRemoved;
 
 // Track per-thumb DOM nodes and their object URLs so we can diff-render
 // without rebuilding the grid on every state change.
 const rendered = new Map(); // id -> { node: HTMLElement, url: string, thumbnailBlob: Blob, badgeEl: HTMLElement|null }
+// Refs for the dedupe row inside the batch panel (set during buildBatchPanel).
+let dedupeRowEls = null;
 let gridEl = null;
 let emptyEl = null;
 let introEl = null;
@@ -309,6 +327,12 @@ function diffRender(state) {
     // batch panel and cleared on first per-image edit.
     syncBatchBadge(entry, img);
 
+    // Dedupe find-mode overlay (v1.2 Feature 7). When state.dedupe.active
+    // is true and this id is in markedIds, show a dark overlay + Duplicate
+    // badge on the thumb so the user can see at a glance which items are
+    // queued for removal. Click handler routes accordingly (see createThumb).
+    syncDedupeOverlay(entry, id, state);
+
     // Re-attach into queue order: insertAfter(prev) or prepend.
     if (prev === null) {
       if (gridEl.firstChild !== entry.node) gridEl.insertBefore(entry.node, gridEl.firstChild);
@@ -359,10 +383,54 @@ function createThumb(id, img) {
   });
   btn.addEventListener('click', (e) => {
     if (e.target === removeEl || removeEl.contains(e.target)) return;
+    // v1.2 Feature 7: in find-duplicates mode, thumbs toggle their marked
+    // state instead of activating-and-opening the editor. Lets the user
+    // override the auto-pick (e.g. un-mark a false positive) without
+    // disrupting their queue context.
+    if (getState().dedupe.active) {
+      toggleDedupeMark(id);
+      return;
+    }
     setActive(id);
     update(s => { s.ui.view = 'editor'; });
   });
-  return { node: btn, url, thumbnailBlob: img.source.thumbnail, badgeEl: null };
+  return { node: btn, url, thumbnailBlob: img.source.thumbnail, badgeEl: null, dedupeBadgeEl: null };
+}
+
+// Sync the find-mode dark overlay + "Duplicate" badge for a single thumb.
+// Adds .is-dedupe-marked on the node when ID is currently marked; CSS
+// renders the overlay via :before/:after. The text badge is a separate
+// child so screen readers announce it.
+function syncDedupeOverlay(entry, id, state) {
+  const d = state && state.dedupe;
+  const active = !!(d && d.active);
+  const isMarked = active && Array.isArray(d.markedIds) && d.markedIds.indexOf(id) !== -1;
+
+  if (active) {
+    entry.node.classList.add('is-dedupe-mode');
+    entry.node.setAttribute('aria-pressed', isMarked ? 'true' : 'false');
+  } else {
+    entry.node.classList.remove('is-dedupe-mode');
+    entry.node.classList.remove('is-dedupe-marked');
+    if (entry.dedupeBadgeEl) {
+      entry.dedupeBadgeEl.remove();
+      entry.dedupeBadgeEl = null;
+    }
+    return;
+  }
+
+  entry.node.classList.toggle('is-dedupe-marked', isMarked);
+  if (isMarked && !entry.dedupeBadgeEl) {
+    const badge = document.createElement('span');
+    badge.className = 'queue-thumb-dedupe-badge';
+    badge.textContent = t('dedupeBadge');
+    badge.setAttribute('aria-hidden', 'false');
+    entry.node.appendChild(badge);
+    entry.dedupeBadgeEl = badge;
+  } else if (!isMarked && entry.dedupeBadgeEl) {
+    entry.dedupeBadgeEl.remove();
+    entry.dedupeBadgeEl = null;
+  }
 }
 
 function syncBatchBadge(entry, img) {
@@ -503,6 +571,113 @@ function buildBatchPanel() {
   // Set initial state synchronously so the first paint isn't briefly
   // "enabled then immediately disabled" before the subscriber fires.
   syncBatchHistoryButtons(getHistoryStats());
+
+  // --- Find duplicates (v1.2 Feature 7) -----------------------------------
+  // A row with three controls: Find button, sensitivity dropdown, and a
+  // Remove button + Cancel button that appear ONLY when find-mode is
+  // active (driven by state.dedupe). The "No duplicates found" pill is
+  // a transient sibling element shown for 3 s after a no-result scan.
+  const dedupeRow = document.createElement('div');
+  dedupeRow.className = 'batch-dedupe-row';
+
+  const dedupeFindBtn = document.createElement('button');
+  dedupeFindBtn.type = 'button';
+  dedupeFindBtn.className = 'batch-dedupe-find';
+  dedupeFindBtn.textContent = t('dedupeFindBtn');
+  dedupeFindBtn.setAttribute('aria-label', t('dedupeFindBtn'));
+  dedupeRow.appendChild(dedupeFindBtn);
+
+  const dedupeSensitivitySel = document.createElement('select');
+  dedupeSensitivitySel.className = 'batch-dedupe-sensitivity';
+  dedupeSensitivitySel.setAttribute('aria-label', t('dedupeSensitivity'));
+  for (const lvl of ['strict', 'normal', 'loose']) {
+    const o = document.createElement('option');
+    o.value = lvl;
+    o.textContent = t('dedupeSensitivity' + lvl[0].toUpperCase() + lvl.slice(1));
+    if (lvl === 'normal') o.selected = true;
+    dedupeSensitivitySel.appendChild(o);
+  }
+  dedupeRow.appendChild(dedupeSensitivitySel);
+
+  const dedupeCancelBtn = document.createElement('button');
+  dedupeCancelBtn.type = 'button';
+  dedupeCancelBtn.className = 'batch-dedupe-cancel';
+  dedupeCancelBtn.textContent = t('dedupeCancelBtn');
+  dedupeCancelBtn.hidden = true;
+  dedupeRow.appendChild(dedupeCancelBtn);
+
+  const dedupeRemoveBtn = document.createElement('button');
+  dedupeRemoveBtn.type = 'button';
+  dedupeRemoveBtn.className = 'batch-dedupe-remove btn-primary';
+  dedupeRemoveBtn.textContent = t('dedupeRemoveBtn', { count: 0 });
+  dedupeRemoveBtn.hidden = true;
+  dedupeRow.appendChild(dedupeRemoveBtn);
+
+  panel.appendChild(dedupeRow);
+
+  // Transient "no duplicates found" pill — inserted hidden, shown briefly.
+  const dedupeNonePill = document.createElement('div');
+  dedupeNonePill.className = 'batch-dedupe-none-pill';
+  dedupeNonePill.textContent = t('dedupeNonePill');
+  dedupeNonePill.hidden = true;
+  panel.appendChild(dedupeNonePill);
+
+  // Click handlers — async, swallow errors with a toast so a worker crash
+  // doesn't break the queue panel.
+  dedupeFindBtn.addEventListener('click', async () => {
+    const prevLabel = dedupeFindBtn.textContent;
+    dedupeFindBtn.disabled = true;
+    try {
+      const result = await runFindDuplicates({
+        onProgress: ({ done, total }) => {
+          dedupeFindBtn.textContent = t('dedupeHashing', { done, total });
+        },
+      });
+      dedupeFindBtn.textContent = prevLabel;
+      if (!result || result.clusters.length === 0) {
+        // Show "no duplicates" pill for 3 s.
+        dedupeNonePill.hidden = false;
+        setTimeout(() => { dedupeNonePill.hidden = true; }, 3000);
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('dedupe: findDuplicates failed', err);
+      dedupeFindBtn.textContent = prevLabel;
+      showToast(t('dedupeFailedToast'), { variant: 'error' });
+    } finally {
+      dedupeFindBtn.disabled = false;
+    }
+  });
+
+  dedupeSensitivitySel.addEventListener('change', () => {
+    setDedupeSensitivity(dedupeSensitivitySel.value);
+    // If find-mode is active, re-run automatically so the user immediately
+    // sees the new threshold's clusters.
+    if (getState().dedupe.active) {
+      dedupeFindBtn.click();
+    }
+  });
+
+  dedupeCancelBtn.addEventListener('click', () => {
+    cancelDedupeFindMode();
+  });
+
+  dedupeRemoveBtn.addEventListener('click', () => {
+    const snapshot = removeMarkedDuplicates();
+    if (snapshot.removed.length > 0) {
+      showRemoveUndoToast(snapshot);
+    }
+  });
+
+  // Stash refs for the syncDedupeRow function below.
+  dedupeRowEls = {
+    row: dedupeRow,
+    findBtn: dedupeFindBtn,
+    sensitivitySel: dedupeSensitivitySel,
+    cancelBtn: dedupeCancelBtn,
+    removeBtn: dedupeRemoveBtn,
+    nonePill: dedupeNonePill,
+  };
 
   // --- 1. Resize -----------------------------------------------------------
   const resizeSection = buildSection(t('batchSectionResize'), 'batch-resize-section', true);
@@ -1077,7 +1252,73 @@ function capitalize(s) {
 // scratch pads). Also updates the file-count / size readout.
 // --------------------------------------------------------------------------
 
+// Sync the dedupe row's visibility / text from state.dedupe. Called from
+// syncBatchPanel on every state change. Three cases:
+//   - active = false: Find btn + sensitivity dropdown visible; Cancel +
+//     Remove hidden.
+//   - active = true, markedIds.length === 0: Find + sensitivity + Cancel
+//     visible; Remove hidden (no point — nothing to remove).
+//   - active = true, markedIds.length > 0: all four buttons visible;
+//     Remove shows "(N)".
+function syncDedupeRow(state) {
+  if (!dedupeRowEls) return;
+  const d = state && state.dedupe;
+  const active = !!(d && d.active);
+  const markedCount = d && Array.isArray(d.markedIds) ? d.markedIds.length : 0;
+  dedupeRowEls.cancelBtn.hidden = !active;
+  dedupeRowEls.removeBtn.hidden = !(active && markedCount > 0);
+  if (active && markedCount > 0) {
+    dedupeRowEls.removeBtn.textContent = t('dedupeRemoveBtn', { count: markedCount });
+  }
+  // Sync dropdown value to state (in case it was set programmatically).
+  if (document.activeElement !== dedupeRowEls.sensitivitySel) {
+    dedupeRowEls.sensitivitySel.value = (d && d.sensitivity) || 'normal';
+  }
+}
+
+// Show a transient toast with an "Undo" link after the user clicks Remove
+// duplicates. Clicking Undo restores the removed images and re-enters
+// find-mode. The toast auto-dismisses after the timeout; once dismissed,
+// the removal is permanent for the session.
+//
+// Implementation: a custom toast element appended to the page, because the
+// existing showToast() doesn't support a click-action affordance.
+function showRemoveUndoToast(snapshot) {
+  if (!snapshot || !snapshot.removed || snapshot.removed.length === 0) return;
+  const TOAST_MS = 15000;
+  const count = snapshot.removed.length;
+  const el = document.createElement('div');
+  el.className = 'dedupe-undo-toast';
+  el.setAttribute('role', 'status');
+  // Render: "Removed N duplicate(s). [Undo]" — Undo link nested as a button
+  // so screen readers announce it as an actionable element.
+  const msg = document.createElement('span');
+  msg.textContent = t('dedupeRemovedToast', { count });
+  el.appendChild(msg);
+  const undoLink = document.createElement('button');
+  undoLink.type = 'button';
+  undoLink.className = 'dedupe-undo-link';
+  undoLink.textContent = t('editorUndo');
+  el.appendChild(undoLink);
+  document.body.appendChild(el);
+
+  let dismissed = false;
+  const dismiss = () => {
+    if (dismissed) return;
+    dismissed = true;
+    if (el.parentNode) el.parentNode.removeChild(el);
+  };
+  undoLink.addEventListener('click', () => {
+    restoreDedupeSnapshot(snapshot);
+    dismiss();
+  });
+  setTimeout(dismiss, TOAST_MS);
+}
+
 function syncBatchPanel(state) {
+  // Dedupe row state is bound at the same time as panelRefs (same builder)
+  // but uses its own ref var. Sync it whether or not panelRefs is bound.
+  syncDedupeRow(state);
   if (!panelRefs) return;
   const exp = state.export || { format: 'png', quality: 0.92, filenameTemplate: '{base}-edited' };
   const pdfOpts = exp.pdf || { pageSize: 'fit', orientation: 'auto', margins: undefined, fitMode: 'contain' };

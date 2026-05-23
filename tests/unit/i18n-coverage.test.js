@@ -141,6 +141,14 @@ const KNOWN_DYNAMIC_KEYS = new Set([
   'batchProgressBgTitlePlural',
   'batchProgressExportTitleSingular',
   'batchProgressExportTitlePlural',
+  // queueView.js builds dedupe sensitivity option labels via
+  // `t('dedupeSensitivity' + lvl[0].toUpperCase() + lvl.slice(1))`:
+  'dedupeSensitivityStrict',
+  'dedupeSensitivityNormal',
+  'dedupeSensitivityLoose',
+  // queueView.js will reference dedupeBadge when rendering the dark
+  // overlay on marked thumbnails (Task #37 / v1.2 Feature 7).
+  'dedupeBadge',
 ]);
 
 test('every referenced i18n key exists in TRANSLATIONS.en', () => {

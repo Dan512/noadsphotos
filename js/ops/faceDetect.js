@@ -28,6 +28,7 @@
 // redact overlays.
 
 import { showFaceConsentModal } from './faceConsent.js';
+import { probeCapabilities } from '../capabilities.js';
 
 // --- Consent + load gating ------------------------------------------------
 
@@ -42,11 +43,18 @@ let sessionPromise = null;                  // Promise<{ run, decode }>
 let testSessionForTest = null;              // injected by _setSessionForTest
 
 const MODEL_URL = '/js/vendor/blazeface/face_detector.onnx';
-// Inference uses the SAME `onnxruntime-web` we already vendor for
-// bg-remove (see index.html's import map). Reusing the bundle keeps the
-// total download budget unchanged when this feature is used after
-// bg-remove (or vice versa).
-const ORT_SPECIFIER = 'onnxruntime-web';
+// We vendor TWO ORT bundles (see index.html import map):
+//   - 'onnxruntime-web'        → CPU bundle, WASM embedded, no external fetch.
+//   - 'onnxruntime-web/webgpu' → WebGPU bundle, also self-contained.
+//
+// The CPU bundle does NOT include the JSEP WASM that ORT needs when you
+// ask for the WebGPU executionProvider — it will 404 trying to fetch
+// `/ort-wasm-simd-threaded.jsep.wasm`, and the subsequent CPU-only retry
+// inherits the broken initWasm() state. The fix: pick the bundle
+// up-front based on caps.webGPU, and ONLY request the executionProviders
+// the chosen bundle actually supports.
+const ORT_CPU_SPECIFIER    = 'onnxruntime-web';
+const ORT_WEBGPU_SPECIFIER = 'onnxruntime-web/webgpu';
 
 const INPUT_SIZE = 256;
 const SCORE_THRESHOLD = 0.5;                // sigmoid space — empirical default
@@ -142,32 +150,57 @@ async function loadSession() {
   if (testSessionForTest) return testSessionForTest;
   if (sessionPromise) return sessionPromise;
   sessionPromise = (async () => {
+    // Probe WebGPU support before choosing a bundle. If the device has
+    // navigator.gpu we load the WebGPU bundle (faster inference); else we
+    // load the CPU bundle (still ~200 ms for BlazeFace — plenty fast).
+    //
+    // CRITICAL: the CPU bundle does NOT include the JSEP WASM. Requesting
+    // executionProviders: ['webgpu', ...] against the CPU bundle triggers
+    // an external WASM fetch for /ort-wasm-simd-threaded.jsep.wasm that
+    // 404s, and the CPU-only retry inside ORT fails because initWasm()
+    // is already in a broken state. So we ONLY pass executionProviders
+    // the loaded bundle can actually serve.
+    let caps;
+    try { caps = await probeCapabilities(); }
+    catch { caps = { webGPU: false }; }
+    const useGpu = !!caps.webGPU;
+    const specifier = useGpu ? ORT_WEBGPU_SPECIFIER : ORT_CPU_SPECIFIER;
+    const providers = useGpu ? ['webgpu', 'cpu'] : ['cpu'];
+
     let ort;
     try {
-      ort = await import(/* @vite-ignore */ ORT_SPECIFIER);
+      ort = await import(/* @vite-ignore */ specifier);
     } catch (err) {
       sessionPromise = null;
       throw new Error('face_ort_load_failed: ' + (err && err.message ? err.message : err));
     }
-    // Reuse the existing WebGPU/CPU dual-provider pattern bg-remove uses.
-    // WebGPU is preferred when available (sub-100 ms inference on a
-    // mid-range GPU); CPU is the universal fallback.
+
     let inferenceSession;
     try {
       inferenceSession = await ort.InferenceSession.create(MODEL_URL, {
-        executionProviders: ['webgpu', 'cpu'],
+        executionProviders: providers,
         graphOptimizationLevel: 'all',
       });
     } catch (err) {
-      // WebGPU not available on this device — try CPU-only.
-      try {
-        inferenceSession = await ort.InferenceSession.create(MODEL_URL, {
-          executionProviders: ['cpu'],
-          graphOptimizationLevel: 'all',
-        });
-      } catch (cpuErr) {
+      // If we requested WebGPU and it failed (e.g. adapter disappeared
+      // post-probe), we CAN'T just retry against the same module — once
+      // ORT's WASM init is broken there's no recovery. Re-import the CPU
+      // bundle fresh and try again.
+      if (useGpu) {
+        try {
+          const cpuOrt = await import(/* @vite-ignore */ ORT_CPU_SPECIFIER);
+          inferenceSession = await cpuOrt.InferenceSession.create(MODEL_URL, {
+            executionProviders: ['cpu'],
+            graphOptimizationLevel: 'all',
+          });
+          ort = cpuOrt;
+        } catch (cpuErr) {
+          sessionPromise = null;
+          throw new Error('face_session_create_failed: ' + (cpuErr && cpuErr.message ? cpuErr.message : cpuErr));
+        }
+      } else {
         sessionPromise = null;
-        throw new Error('face_session_create_failed: ' + (cpuErr && cpuErr.message ? cpuErr.message : cpuErr));
+        throw new Error('face_session_create_failed: ' + (err && err.message ? err.message : err));
       }
     }
     return {

@@ -2779,3 +2779,135 @@ dialog.heic-consent-dialog p {
   color: var(--text-muted);
 }
 
+
+/* --- v1.2 Feature 7: find duplicates ----------------------------------
+   Batch-panel toolbar row + queue-thumb find-mode overlays + post-remove
+   undo toast. The toolbar lives in queueView buildBatchPanel; the click
+   logic that drives it lives in js/dedupe.js. */
+
+.batch-dedupe-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  align-items: center;
+  margin-bottom: var(--space-md);
+  padding-bottom: var(--space-sm);
+  border-bottom: 1px solid var(--border);
+}
+.batch-dedupe-find,
+.batch-dedupe-cancel {
+  padding: var(--space-xs) var(--space-sm);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-sm);
+  cursor: pointer;
+}
+.batch-dedupe-find:hover:not(:disabled),
+.batch-dedupe-cancel:hover {
+  background: var(--surface-2);
+}
+.batch-dedupe-find:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+.batch-dedupe-sensitivity {
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-sm);
+  cursor: pointer;
+}
+.batch-dedupe-remove {
+  /* btn-primary already supplies background + color; this just ensures
+     padding parity with the sibling tertiary buttons in the row. */
+  padding: var(--space-xs) var(--space-sm);
+  font-size: var(--t-sm);
+}
+.batch-dedupe-none-pill {
+  margin-bottom: var(--space-md);
+  padding: var(--space-xs) var(--space-sm);
+  background: color-mix(in srgb, var(--success, #1f9d55) 18%, transparent);
+  color: var(--text);
+  border-radius: var(--radius-pill);
+  font-size: var(--t-sm);
+  /* Shape-based affordance for colorblind: include a checkmark glyph. */
+}
+.batch-dedupe-none-pill::before {
+  content: '✓ ';
+  font-weight: 700;
+}
+
+/* Find-mode thumbnail overlay. The dark rgba(0,0,0,0.55) layer is drawn
+   via ::before so the underlying <img> stays sharp; the "Duplicate" badge
+   is a separate child (queue-thumb-dedupe-badge) for screen-reader
+   announcement. Shape-based affordance: badge + greyed-out look, not just
+   color shift. */
+.queue-thumb.is-dedupe-marked::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 1;
+}
+.queue-thumb-dedupe-badge {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(0, 0, 0, 0.78);
+  color: #fff;
+  font-size: var(--t-sm);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  pointer-events: none;
+  z-index: 2;
+  white-space: nowrap;
+}
+/* In find-mode, the cursor hint is "click to toggle mark," not "open". */
+.queue-thumb.is-dedupe-mode {
+  cursor: pointer;
+}
+
+/* Post-remove undo toast. Floats bottom-center; matches the visual weight
+   of the existing showToast() output but with an inline action button. */
+.dedupe-undo-toast {
+  position: fixed;
+  bottom: calc(var(--space-xl) + env(safe-area-inset-bottom, 0));
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: var(--space-md);
+  align-items: center;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  font-size: var(--t-sm);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  z-index: 50;
+}
+.dedupe-undo-link {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--t-sm);
+  padding: 2px 10px;
+  cursor: pointer;
+}
+.dedupe-undo-link:hover {
+  background: var(--surface);
+}
