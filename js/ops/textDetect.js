@@ -47,6 +47,21 @@ const CORE_PATH            = '/js/vendor/tesseract/core/';
 const LANG_PATH            = '/js/vendor/tesseract/lang/';
 
 const CONFIDENCE_THRESHOLD = 50;            // Tesseract scale 0..100; below ⇒ probably-noise
+// Per-sensitivity confidence thresholds for the shared "AI detection
+// sensitivity" UI in the redact panel. Lower = more text regions
+// (including noise / icons / textures); higher = fewer but cleaner.
+const CONFIDENCE_THRESHOLDS = Object.freeze({
+  strict: 70,
+  normal: CONFIDENCE_THRESHOLD,
+  loose:  30,
+});
+
+function confidenceForSensitivity(level) {
+  if (level && Object.prototype.hasOwnProperty.call(CONFIDENCE_THRESHOLDS, level)) {
+    return CONFIDENCE_THRESHOLDS[level];
+  }
+  return CONFIDENCE_THRESHOLD;
+}
 const MIN_AREA_PX          = 16;            // drop sub-4×4 specks
 
 // --- Public API ------------------------------------------------------------
@@ -94,7 +109,7 @@ export async function ensureTextConsent() {
  * progress indicator.
  *
  * @param {ImageBitmap | HTMLCanvasElement | OffscreenCanvas} bitmap
- * @param {{ progress?: (msg: object) => void }} [opts]
+ * @param {{ progress?: (msg: object) => void, sensitivity?: 'strict' | 'normal' | 'loose' }} [opts]
  * @returns {Promise<Array<{x: number, y: number, w: number, h: number, text: string, confidence: number}>>}
  */
 export async function detectText(bitmap, opts = {}) {
@@ -109,7 +124,67 @@ export async function detectText(bitmap, opts = {}) {
   // closed/decoded later.
   const canvas = bitmapToCanvas(bitmap);
   const result = await worker.recognize(canvas);
-  return postProcess(result && result.data ? result.data.lines : []);
+  const threshold = confidenceForSensitivity(opts.sensitivity);
+  return postProcess(result && result.data ? result.data.lines : [], threshold);
+}
+
+/**
+ * Batch text detection: iterate `imageIds`, lazy-decode each bitmap via the
+ * supplied `getBitmap` function, run detectText, and pass per-image rects
+ * to `onImageDone`. Mirror of detectFacesBatch in faceDetect.js — same
+ * sequential decode-detect-discard loop, same one-time consent up front.
+ *
+ * Tesseract is slow (~1-5 s per image on CPU). For batches > 10 images
+ * the user really wants the cancel button — `shouldAbort()` is polled
+ * between images.
+ *
+ * @param {string[]} imageIds
+ * @param {(id: string) => Promise<ImageBitmap | null>} getBitmap
+ * @param {{
+ *   sensitivity?: 'strict'|'normal'|'loose',
+ *   onProgress?: (msg: {done: number, total: number, imageId: string, inner?: {status: string, progress: number}}) => void,
+ *   shouldAbort?: () => boolean,
+ *   onImageDone?: (imageId: string, rects: Array<object>) => void,
+ * }} [opts]
+ * @returns {Promise<{ totalLines: number, imagesScanned: number, aborted: boolean }>}
+ */
+export async function detectTextBatch(imageIds, getBitmap, opts = {}) {
+  const ids = Array.isArray(imageIds) ? imageIds : [];
+  const total = ids.length;
+  if (total === 0) return { totalLines: 0, imagesScanned: 0, aborted: false };
+
+  const granted = await ensureTextConsent();
+  if (!granted) throw new Error('text_consent_declined');
+
+  const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : () => {};
+  const onImageDone = typeof opts.onImageDone === 'function' ? opts.onImageDone : () => {};
+  const shouldAbort = typeof opts.shouldAbort === 'function' ? opts.shouldAbort : () => false;
+
+  let totalLines = 0;
+  let scanned = 0;
+  for (const id of ids) {
+    if (shouldAbort()) {
+      return { totalLines, imagesScanned: scanned, aborted: true };
+    }
+    onProgress({ done: scanned, total, imageId: id });
+    let bitmap = null;
+    try {
+      bitmap = await getBitmap(id);
+      if (!bitmap) { scanned++; continue; }
+      const rects = await detectText(bitmap, {
+        sensitivity: opts.sensitivity,
+        progress: (inner) => onProgress({ done: scanned, total, imageId: id, inner }),
+      });
+      totalLines += rects.length;
+      onImageDone(id, rects);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(`detectTextBatch: image ${id} failed`, err);
+    }
+    scanned++;
+  }
+  onProgress({ done: total, total, imageId: '' });
+  return { totalLines, imagesScanned: scanned, aborted: false };
 }
 
 // --- Worker lifecycle -----------------------------------------------------
@@ -214,13 +289,14 @@ function bitmapToCanvas(bitmap) {
 
 // --- Post-process ---------------------------------------------------------
 
-function postProcess(lines) {
+function postProcess(lines, threshold) {
   if (!Array.isArray(lines)) return [];
+  const minConfidence = Number.isFinite(threshold) ? threshold : CONFIDENCE_THRESHOLD;
   const out = [];
   for (const line of lines) {
     if (!line || !line.bbox) continue;
     const confidence = Number.isFinite(line.confidence) ? line.confidence : 0;
-    if (confidence < CONFIDENCE_THRESHOLD) continue;
+    if (confidence < minConfidence) continue;
     const { x0, y0, x1, y1 } = line.bbox;
     const x = Math.min(x0, x1);
     const y = Math.min(y0, y1);

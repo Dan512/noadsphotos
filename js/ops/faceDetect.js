@@ -68,9 +68,33 @@ const ORT_CPU_SPECIFIER    = 'onnxruntime-web';
 const ORT_WEBGPU_SPECIFIER = 'onnxruntime-web/webgpu';
 
 const INPUT_SIZE = 256;
-const SCORE_THRESHOLD = 0.5;                // sigmoid space — empirical default
 const IOU_THRESHOLD   = 0.3;
 const MAX_DETECTIONS  = 50;
+
+// Sigmoid-space score thresholds for the three sensitivity presets exposed
+// to the UI. Lower = more detections (including some false positives);
+// higher = fewer detections (but more confident, may miss occluded /
+// non-frontal faces). 'normal' is the working default for typical photos.
+//
+// Empirical anchors:
+//   0.65 strict  → only very confident, head-on, unoccluded faces
+//   0.4  normal  → good balance for everyday photos
+//   0.25 loose   → catches group-photo cases (kids in crowns, partial
+//                   side profiles, lower-res faces) at the cost of an
+//                   occasional false positive on face-like patterns
+export const SCORE_THRESHOLDS = Object.freeze({
+  strict: 0.65,
+  normal: 0.40,
+  loose:  0.25,
+});
+const DEFAULT_SCORE_THRESHOLD = SCORE_THRESHOLDS.normal;
+
+function thresholdForSensitivity(level) {
+  if (level && Object.prototype.hasOwnProperty.call(SCORE_THRESHOLDS, level)) {
+    return SCORE_THRESHOLDS[level];
+  }
+  return DEFAULT_SCORE_THRESHOLD;
+}
 
 // --- Anchor grid ----------------------------------------------------------
 //
@@ -139,9 +163,10 @@ export async function ensureFaceConsent() {
  * Throws 'face_consent_declined' if the user cancels the consent modal.
  *
  * @param {ImageBitmap | HTMLCanvasElement | OffscreenCanvas} bitmap
+ * @param {{ sensitivity?: 'strict' | 'normal' | 'loose' }} [opts]
  * @returns {Promise<Array<{x: number, y: number, w: number, h: number, score: number}>>}
  */
-export async function detectFaces(bitmap) {
+export async function detectFaces(bitmap, opts = {}) {
   if (!bitmap || !bitmap.width || !bitmap.height) return [];
   const granted = await ensureFaceConsent();
   if (!granted) throw new Error('face_consent_declined');
@@ -150,9 +175,70 @@ export async function detectFaces(bitmap) {
   const { tensor, scale, dx, dy } = preprocess(bitmap);
 
   const outputs = await session.run(tensor);
-  const detections = decode(outputs);
+  const threshold = thresholdForSensitivity(opts.sensitivity);
+  const detections = decode(outputs, threshold);
   const merged = nms(detections, IOU_THRESHOLD).slice(0, MAX_DETECTIONS);
   return merged.map(d => unLetterbox(d, bitmap.width, bitmap.height, scale, dx, dy));
+}
+
+/**
+ * Batch face detection: iterate `imageIds`, lazy-decode each bitmap via the
+ * supplied `getBitmap` function, run detectFaces against the (already-
+ * consented) session, and pass per-image rects to `onImageDone`. The
+ * caller is responsible for writing the resulting overlays into state (we
+ * stay decoupled so the caller can wrap everything in one history
+ * transaction).
+ *
+ * The decode-detect-discard loop is sequential to avoid OOM on phones —
+ * decoding 50 bitmaps simultaneously would blow through memory.
+ *
+ * @param {string[]} imageIds
+ * @param {(id: string) => Promise<ImageBitmap | null>} getBitmap
+ * @param {{
+ *   sensitivity?: 'strict'|'normal'|'loose',
+ *   onProgress?: (msg: {done: number, total: number, imageId: string}) => void,
+ *   shouldAbort?: () => boolean,
+ *   onImageDone?: (imageId: string, rects: Array<object>) => void,
+ * }} [opts]
+ * @returns {Promise<{ totalFaces: number, imagesScanned: number, aborted: boolean }>}
+ */
+export async function detectFacesBatch(imageIds, getBitmap, opts = {}) {
+  const ids = Array.isArray(imageIds) ? imageIds : [];
+  const total = ids.length;
+  if (total === 0) return { totalFaces: 0, imagesScanned: 0, aborted: false };
+
+  const granted = await ensureFaceConsent();
+  if (!granted) throw new Error('face_consent_declined');
+
+  const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : () => {};
+  const onImageDone = typeof opts.onImageDone === 'function' ? opts.onImageDone : () => {};
+  const shouldAbort = typeof opts.shouldAbort === 'function' ? opts.shouldAbort : () => false;
+
+  // Warm the session once before iterating (saves N-1 redundant probes).
+  await loadSession();
+
+  let totalFaces = 0;
+  let scanned = 0;
+  for (const id of ids) {
+    if (shouldAbort()) {
+      return { totalFaces, imagesScanned: scanned, aborted: true };
+    }
+    onProgress({ done: scanned, total, imageId: id });
+    let bitmap = null;
+    try {
+      bitmap = await getBitmap(id);
+      if (!bitmap) { scanned++; continue; }
+      const rects = await detectFaces(bitmap, opts);
+      totalFaces += rects.length;
+      onImageDone(id, rects);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(`detectFacesBatch: image ${id} failed`, err);
+    }
+    scanned++;
+  }
+  onProgress({ done: total, total, imageId: '' });
+  return { totalFaces, imagesScanned: scanned, aborted: false };
 }
 
 // --- Session lifecycle ----------------------------------------------------
@@ -301,22 +387,23 @@ function createCanvas(w, h) {
 // --- Decode ----------------------------------------------------------------
 //
 // Walk both prediction heads, sigmoid-activate the score logits, filter
-// against SCORE_THRESHOLD, and turn each surviving anchor's regressor into
-// a normalized [0, 1] bbox in the 256×256 input space. The regressor
-// encoding is pixel-space-relative-to-anchor — i.e. cx = anchor.cx + dx —
-// which matches MediaPipe's original BlazeFace decoder.
-function decode(outputs) {
+// against the supplied threshold, and turn each surviving anchor's
+// regressor into a normalized [0, 1] bbox in the 256×256 input space.
+// The regressor encoding is pixel-space-relative-to-anchor — i.e.
+// cx = anchor.cx + dx — which matches MediaPipe's original BlazeFace
+// decoder.
+function decode(outputs, scoreThreshold) {
   const detections = [];
-  decodeHead(outputs.box_coords_1.data, outputs.box_scores_1.data, ANCHORS_HEAD_1, detections);
-  decodeHead(outputs.box_coords_2.data, outputs.box_scores_2.data, ANCHORS_HEAD_2, detections);
+  decodeHead(outputs.box_coords_1.data, outputs.box_scores_1.data, ANCHORS_HEAD_1, detections, scoreThreshold);
+  decodeHead(outputs.box_coords_2.data, outputs.box_scores_2.data, ANCHORS_HEAD_2, detections, scoreThreshold);
   return detections;
 }
 
-function decodeHead(coords, scores, anchors, out) {
+function decodeHead(coords, scores, anchors, out, scoreThreshold) {
   const n = scores.length;
   for (let i = 0; i < n; i++) {
     const score = sigmoid(scores[i]);
-    if (score < SCORE_THRESHOLD) continue;
+    if (score < scoreThreshold) continue;
     const c = i * 16;
     const ax = anchors[i * 2 + 0];
     const ay = anchors[i * 2 + 1];

@@ -1407,6 +1407,33 @@ main#workspace:has(> #editor-view:not([hidden])) {
   border-color: var(--accent);
 }
 
+/* AI-detect sensitivity row inside the redact panel. Mirrors the mode
+   group's chip-pill look so users connect "this is a preset like Mode."
+   Shape-based active state (filled bg + bolder weight) so colorblind
+   users can tell the active chip apart even in monochrome. */
+.editor-panel .redact-sensitivity-group {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: var(--space-xs);
+  grid-column: 2 / 4;
+}
+.editor-panel .redact-sensitivity-group button {
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: var(--t-sm);
+  cursor: pointer;
+}
+.editor-panel .redact-sensitivity-group button.is-active {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
 /* --- Export panel (Phase 9) --- */
 .editor-panel .export-panel {
   display: flex;
@@ -2910,4 +2937,43 @@ dialog.heic-consent-dialog p {
 }
 .dedupe-undo-link:hover {
   background: var(--surface);
+}
+
+/* --- v1.2 batch Redact section in the queue panel -----------------------
+   Mirrors the editor's redact-tool chip styles so the controls feel like
+   the same UI. The Mode and Sensitivity rows are 3-up button grids;
+   strength/color are inline rows. */
+.batch-redact-mode-group,
+.batch-redact-sensitivity-group {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-xs);
+}
+.batch-redact-mode-group button,
+.batch-redact-sensitivity-group button {
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: var(--t-sm);
+  cursor: pointer;
+}
+.batch-redact-mode-group button.is-active,
+.batch-redact-sensitivity-group button.is-active {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+.batch-redact-strength-readout {
+  margin-left: var(--space-sm);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--t-sm);
+  color: var(--text-secondary);
+}
+.batch-redact-faces,
+.batch-redact-text {
+  margin-top: var(--space-sm);
 }

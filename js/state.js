@@ -9,6 +9,21 @@ const state = {
     // reads both each frame.
     compareMode: false,
     compareSplit: 0.5,
+    // v1.2 Feature 1 + 4: shared sensitivity preset for the redact tool's
+    // AI-detect buttons (Auto-detect faces + Detect text). 'strict' →
+    // fewer, more-confident detections; 'loose' → catches more at the cost
+    // of false positives. Maps to per-model thresholds inside
+    // js/ops/faceDetect.js and js/ops/textDetect.js.
+    aiDetectSensitivity: 'normal',
+    // Redact-tool defaults. Hoisted from module-local state in
+    // js/tools/redactTool.js so the editor's side-panel controls AND the
+    // queue's batch-panel controls share one source of truth. Changing
+    // any of these in either UI updates the other.
+    redact: {
+      mode: 'mask',          // 'mask' | 'pixelate' | 'blur'
+      strength: 12,          // blur radius / pixel block size (px in source space)
+      color: '#000000',      // hex string, used by mask mode
+    },
   },
   queue:  [],
   images: Object.create(null),

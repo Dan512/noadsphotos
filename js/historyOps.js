@@ -86,3 +86,10 @@ export function withBatchTransforms(label, imageIds, mutator) {
 export function withBatchChromakey(label, imageIds, mutator) {
   return withBatchTransaction(label, imageIds, 'chromakey', KEYS_CHROMAKEY, wrap(mutator));
 }
+
+// v1.2 Feature 1 + 4: batch face / text auto-redact records every touched
+// image's overlays in a single transaction so one Ctrl+Z reverts the whole
+// AI-detect pass.
+export function withBatchOverlays(label, imageIds, mutator) {
+  return withBatchTransaction(label, imageIds, 'overlay', KEYS_OVERLAYS, wrap(mutator));
+}

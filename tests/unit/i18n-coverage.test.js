@@ -149,6 +149,11 @@ const KNOWN_DYNAMIC_KEYS = new Set([
   // queueView.js will reference dedupeBadge when rendering the dark
   // overlay on marked thumbnails (Task #37 / v1.2 Feature 7).
   'dedupeBadge',
+  // redactTool.js builds the AI-detect sensitivity preset labels via
+  // `t('redactDetectSensitivity' + level[0].toUpperCase() + level.slice(1))`:
+  'redactDetectSensitivityStrict',
+  'redactDetectSensitivityNormal',
+  'redactDetectSensitivityLoose',
 ]);
 
 test('every referenced i18n key exists in TRANSLATIONS.en', () => {

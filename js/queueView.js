@@ -33,6 +33,11 @@ import {
 import { renderForExport } from './render/exportRenderer.js';
 import { showToast } from './errors.js';
 import { applyBgRemoveBatch } from './ops/bgremove.js';
+import { detectFacesBatch } from './ops/faceDetect.js';
+import { detectTextBatch } from './ops/textDetect.js';
+import { newRedactOverlay, REDACT_MODES } from './ops/redact.js';
+import { addOverlay } from './overlays.js';
+import { withBatchOverlays } from './historyOps.js';
 import { t } from './i18n.js';
 import { getSetting } from './settings.js';
 import { renderThumbnail } from './render/exportRenderer.js';
@@ -58,6 +63,10 @@ const restoreDedupeSnapshot   = _restoreRemoved;
 const rendered = new Map(); // id -> { node: HTMLElement, url: string, thumbnailBlob: Blob, badgeEl: HTMLElement|null }
 // Refs for the dedupe row inside the batch panel (set during buildBatchPanel).
 let dedupeRowEls = null;
+// Refs for the v1.2 batch Redact section (set during buildBatchPanel).
+let batchRedactEls = null;
+// Abort flag for in-progress batch detect runs.
+let batchDetectAbort = { value: false };
 let gridEl = null;
 let emptyEl = null;
 let introEl = null;
@@ -886,6 +895,140 @@ function buildBatchPanel() {
   bgSection.body.appendChild(bgBtn);
   panel.appendChild(bgSection.section);
 
+  // --- 6. Redact (v1.2 batch detect) -------------------------------------
+  // Mirrors the editor's redact-tool side panel. Mode / Strength / Color
+  // controls all bind to state.ui.redact (the SAME state the editor reads),
+  // so changing settings here updates the editor's controls live and vice
+  // versa. "On all" buttons iterate the queue.
+  const redactSection = buildSection(t('batchSectionRedact'), 'batch-redact-section', false);
+
+  // Mode row.
+  const redactModeRow = document.createElement('div');
+  redactModeRow.className = 'batch-row';
+  const redactModeLabel = document.createElement('span');
+  redactModeLabel.textContent = t('redactMode');
+  redactModeRow.appendChild(redactModeLabel);
+  const redactModeGroup = document.createElement('div');
+  redactModeGroup.className = 'batch-redact-mode-group';
+  const batchRedactModeBtns = {};
+  for (const mode of REDACT_MODES) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `batch-redact-mode batch-redact-mode-${mode}`;
+    btn.dataset.mode = mode;
+    btn.textContent = mode === 'mask'     ? t('redactModeMask')
+                    : mode === 'pixelate' ? t('redactModePixelate')
+                    : t('redactModeBlur');
+    btn.setAttribute('aria-label', btn.textContent);
+    btn.addEventListener('click', () => {
+      update(s => { s.ui.redact.mode = mode; });
+    });
+    redactModeGroup.appendChild(btn);
+    batchRedactModeBtns[mode] = btn;
+  }
+  redactModeRow.appendChild(redactModeGroup);
+  redactSection.body.appendChild(redactModeRow);
+
+  // Strength row — visible only for blur/pixelate.
+  const batchRedactStrengthRow = document.createElement('label');
+  batchRedactStrengthRow.className = 'batch-row batch-redact-strength-row';
+  const batchRedactStrengthLabel = document.createElement('span');
+  batchRedactStrengthLabel.textContent = t('redactStrength');
+  batchRedactStrengthRow.appendChild(batchRedactStrengthLabel);
+  const batchRedactStrengthInput = document.createElement('input');
+  batchRedactStrengthInput.type = 'range';
+  batchRedactStrengthInput.min = '2';
+  batchRedactStrengthInput.max = '40';
+  batchRedactStrengthInput.step = '1';
+  batchRedactStrengthInput.className = 'batch-redact-strength';
+  batchRedactStrengthInput.setAttribute('aria-label', t('redactStrengthAria'));
+  const batchRedactStrengthReadout = document.createElement('span');
+  batchRedactStrengthReadout.className = 'batch-redact-strength-readout';
+  batchRedactStrengthReadout.setAttribute('aria-live', 'polite');
+  batchRedactStrengthInput.addEventListener('input', () => {
+    const n = Math.max(2, Math.min(40, Number(batchRedactStrengthInput.value) | 0));
+    update(s => { s.ui.redact.strength = n; });
+  });
+  batchRedactStrengthRow.appendChild(batchRedactStrengthInput);
+  batchRedactStrengthRow.appendChild(batchRedactStrengthReadout);
+  redactSection.body.appendChild(batchRedactStrengthRow);
+
+  // Color row — visible only for mask mode.
+  const batchRedactColorRow = document.createElement('label');
+  batchRedactColorRow.className = 'batch-row batch-redact-color-row';
+  const batchRedactColorLabel = document.createElement('span');
+  batchRedactColorLabel.textContent = t('redactColor');
+  batchRedactColorRow.appendChild(batchRedactColorLabel);
+  const batchRedactColorInput = document.createElement('input');
+  batchRedactColorInput.type = 'color';
+  batchRedactColorInput.className = 'batch-redact-color';
+  batchRedactColorInput.setAttribute('aria-label', t('redactColor'));
+  batchRedactColorInput.addEventListener('input', () => {
+    const v = batchRedactColorInput.value || '#000000';
+    update(s => { s.ui.redact.color = v; });
+  });
+  batchRedactColorRow.appendChild(batchRedactColorInput);
+  redactSection.body.appendChild(batchRedactColorRow);
+
+  // Sensitivity row — three preset chips shared with the editor.
+  const batchSensRow = document.createElement('div');
+  batchSensRow.className = 'batch-row batch-redact-sensitivity-row';
+  const batchSensLabel = document.createElement('span');
+  batchSensLabel.textContent = t('redactDetectSensitivity');
+  batchSensRow.appendChild(batchSensLabel);
+  const batchSensGroup = document.createElement('div');
+  batchSensGroup.className = 'batch-redact-sensitivity-group';
+  const batchSensBtns = {};
+  for (const level of ['strict', 'normal', 'loose']) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `batch-redact-sensitivity batch-redact-sensitivity-${level}`;
+    btn.dataset.level = level;
+    const labelKey = 'redactDetectSensitivity' + level[0].toUpperCase() + level.slice(1);
+    btn.textContent = t(labelKey);
+    btn.setAttribute('aria-label', btn.textContent);
+    btn.setAttribute('aria-pressed', 'false');
+    btn.addEventListener('click', () => {
+      update(s => { s.ui.aiDetectSensitivity = level; });
+    });
+    batchSensGroup.appendChild(btn);
+    batchSensBtns[level] = btn;
+  }
+  batchSensRow.appendChild(batchSensGroup);
+  redactSection.body.appendChild(batchSensRow);
+
+  // Auto-detect faces on all + Detect text on all.
+  const batchDetectFacesBtn = document.createElement('button');
+  batchDetectFacesBtn.type = 'button';
+  batchDetectFacesBtn.className = 'batch-apply batch-redact-faces';
+  batchDetectFacesBtn.textContent = t('batchRedactDetectFaces');
+  batchDetectFacesBtn.setAttribute('aria-label', t('batchRedactDetectFaces'));
+  batchDetectFacesBtn.addEventListener('click', () => onBatchDetectFaces(batchDetectFacesBtn));
+  redactSection.body.appendChild(batchDetectFacesBtn);
+
+  const batchDetectTextBtn = document.createElement('button');
+  batchDetectTextBtn.type = 'button';
+  batchDetectTextBtn.className = 'batch-apply batch-redact-text';
+  batchDetectTextBtn.textContent = t('batchRedactDetectText');
+  batchDetectTextBtn.setAttribute('aria-label', t('batchRedactDetectText'));
+  batchDetectTextBtn.addEventListener('click', () => onBatchDetectText(batchDetectTextBtn));
+  redactSection.body.appendChild(batchDetectTextBtn);
+
+  panel.appendChild(redactSection.section);
+
+  // Stash refs for syncBatchRedactSection below.
+  batchRedactEls = {
+    modeBtns: batchRedactModeBtns,
+    strengthInput: batchRedactStrengthInput,
+    strengthReadout: batchRedactStrengthReadout,
+    strengthRow: batchRedactStrengthRow,
+    colorInput: batchRedactColorInput,
+    colorRow: batchRedactColorRow,
+    sensBtns: batchSensBtns,
+    facesBtn: batchDetectFacesBtn,
+    textBtn: batchDetectTextBtn,
+  };
+
   // --- 6. Export ---------------------------------------------------------
   const exportSection = buildSection(t('batchSectionExport'), 'batch-export-section', true);
 
@@ -1315,10 +1458,199 @@ function showRemoveUndoToast(snapshot) {
   setTimeout(dismiss, TOAST_MS);
 }
 
+// Sync the batch Redact section's controls from state.ui.redact +
+// state.ui.aiDetectSensitivity. Called from syncBatchPanel on every
+// state change so editor-side edits (mode/color/strength) reflect here
+// and vice versa.
+function syncBatchRedactSection(state) {
+  if (!batchRedactEls) return;
+  const r = (state.ui && state.ui.redact) || { mode: 'mask', strength: 12, color: '#000000' };
+  const els = batchRedactEls;
+  // Mode chips.
+  for (const m of Object.keys(els.modeBtns)) {
+    const btn = els.modeBtns[m];
+    const active = m === r.mode;
+    btn.classList.toggle('is-active', active);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  }
+  // Strength / color row visibility + values.
+  els.strengthRow.hidden = r.mode === 'mask';
+  els.colorRow.hidden    = r.mode !== 'mask';
+  if (document.activeElement !== els.strengthInput) {
+    els.strengthInput.value = String(r.strength);
+  }
+  els.strengthReadout.textContent = String(Math.round(r.strength));
+  if (document.activeElement !== els.colorInput) {
+    els.colorInput.value = r.color;
+  }
+  // Sensitivity chips.
+  const level = (state.ui && state.ui.aiDetectSensitivity) || 'normal';
+  for (const k of Object.keys(els.sensBtns)) {
+    const btn = els.sensBtns[k];
+    const active = k === level;
+    btn.classList.toggle('is-active', active);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  }
+}
+
+// Run face detection across every queue image. Each image's bitmap is
+// decoded from its source Blob just-in-time (so we don't blow up phone
+// memory holding 50 bitmaps at once), detection runs against the warmed
+// session, and resulting rects are buffered. After the loop, every
+// image's overlays are committed in a SINGLE history transaction so one
+// Ctrl+Z reverts the whole batch.
+async function onBatchDetectFaces(btn) {
+  const state = getState();
+  const ids = state.queue.slice();
+  if (ids.length === 0) {
+    showToast(t('batchRedactEmpty'), { variant: 'warn' });
+    return;
+  }
+  const sensitivity = (state.ui && state.ui.aiDetectSensitivity) || 'normal';
+  const r = state.ui.redact || { mode: 'mask', strength: 12, color: '#000000' };
+  const prevLabel = btn.textContent;
+  btn.disabled = true;
+  batchDetectAbort = { value: false };
+
+  // Buffer of { imageId, rects } to commit after the loop.
+  const buffered = [];
+  let result;
+  try {
+    result = await detectFacesBatch(ids, async (id) => {
+      const img = getState().images[id];
+      if (!img || !img.source || !img.source.blob) return null;
+      try { return await createImageBitmap(img.source.blob); }
+      catch { return null; }
+    }, {
+      sensitivity,
+      shouldAbort: () => batchDetectAbort.value,
+      onProgress: ({ done, total }) => {
+        btn.textContent = t('batchRedactProgress', { done, total });
+      },
+      onImageDone: (id, rects) => {
+        if (rects && rects.length > 0) buffered.push({ id, rects });
+      },
+    });
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = prevLabel;
+    if (err && err.message === 'face_consent_declined') return;
+    console.error('queueView: batch detect faces failed', err);
+    showToast(t('redactDetectFailed'), { variant: 'error' });
+    return;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = prevLabel;
+  }
+
+  // Commit all buffered rects as one history transaction.
+  if (buffered.length === 0) {
+    showToast(t('batchRedactNoFaces'), { variant: 'info' });
+    return;
+  }
+  const affectedIds = buffered.map(b => b.id);
+  withBatchOverlays(`Auto-redact faces on ${affectedIds.length} image(s)`, affectedIds, state2 => {
+    for (const { id, rects } of buffered) {
+      const target = state2.images[id];
+      if (!target) continue;
+      for (const rect of rects) {
+        if (rect.w < 4 || rect.h < 4) continue;
+        addOverlay(target, newRedactOverlay(rect.x, rect.y, rect.w, rect.h, {
+          mode: r.mode, color: r.color, strength: r.strength,
+        }));
+      }
+    }
+  });
+
+  const totalFaces = result ? result.totalFaces : 0;
+  if (result && result.aborted) {
+    showToast(t('batchRedactCancelled'), { variant: 'warn' });
+  } else {
+    showToast(t('batchRedactDoneFaces', { faces: totalFaces, images: affectedIds.length }), { variant: 'info' });
+  }
+}
+
+// Run text detection (OCR) across every queue image. Same pattern as
+// onBatchDetectFaces — sequential decode, single-transaction commit.
+async function onBatchDetectText(btn) {
+  const state = getState();
+  const ids = state.queue.slice();
+  if (ids.length === 0) {
+    showToast(t('batchRedactEmpty'), { variant: 'warn' });
+    return;
+  }
+  const sensitivity = (state.ui && state.ui.aiDetectSensitivity) || 'normal';
+  const r = state.ui.redact || { mode: 'mask', strength: 12, color: '#000000' };
+  const prevLabel = btn.textContent;
+  btn.disabled = true;
+  batchDetectAbort = { value: false };
+
+  const buffered = [];
+  let result;
+  try {
+    result = await detectTextBatch(ids, async (id) => {
+      const img = getState().images[id];
+      if (!img || !img.source || !img.source.blob) return null;
+      try { return await createImageBitmap(img.source.blob); }
+      catch { return null; }
+    }, {
+      sensitivity,
+      shouldAbort: () => batchDetectAbort.value,
+      onProgress: ({ done, total, inner }) => {
+        if (inner && inner.status === 'recognizing text') {
+          const pct = Math.round((inner.progress || 0) * 100);
+          btn.textContent = t('batchRedactProgressInner', { done, total, pct });
+        } else {
+          btn.textContent = t('batchRedactProgress', { done, total });
+        }
+      },
+      onImageDone: (id, rects) => {
+        if (rects && rects.length > 0) buffered.push({ id, rects });
+      },
+    });
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = prevLabel;
+    if (err && err.message === 'text_consent_declined') return;
+    console.error('queueView: batch detect text failed', err);
+    showToast(t('redactDetectTextFailed'), { variant: 'error' });
+    return;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = prevLabel;
+  }
+
+  if (buffered.length === 0) {
+    showToast(t('batchRedactNoText'), { variant: 'info' });
+    return;
+  }
+  const affectedIds = buffered.map(b => b.id);
+  withBatchOverlays(`Auto-redact text on ${affectedIds.length} image(s)`, affectedIds, state2 => {
+    for (const { id, rects } of buffered) {
+      const target = state2.images[id];
+      if (!target) continue;
+      for (const rect of rects) {
+        if (rect.w < 4 || rect.h < 4) continue;
+        addOverlay(target, newRedactOverlay(rect.x, rect.y, rect.w, rect.h, {
+          mode: r.mode, color: r.color, strength: r.strength,
+        }));
+      }
+    }
+  });
+
+  const totalLines = result ? result.totalLines : 0;
+  if (result && result.aborted) {
+    showToast(t('batchRedactCancelled'), { variant: 'warn' });
+  } else {
+    showToast(t('batchRedactDoneText', { lines: totalLines, images: affectedIds.length }), { variant: 'info' });
+  }
+}
+
 function syncBatchPanel(state) {
   // Dedupe row state is bound at the same time as panelRefs (same builder)
   // but uses its own ref var. Sync it whether or not panelRefs is bound.
   syncDedupeRow(state);
+  syncBatchRedactSection(state);
   if (!panelRefs) return;
   const exp = state.export || { format: 'png', quality: 0.92, filenameTemplate: '{base}-edited' };
   const pdfOpts = exp.pdf || { pageSize: 'fit', orientation: 'auto', margins: undefined, fitMode: 'contain' };

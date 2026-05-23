@@ -42,9 +42,17 @@ let overlayCanvas = null;
 
 // v1.2: 'mask' is the privacy-safe default (blur is reversible at low
 // strength — see redact.js for the full rationale).
-let toolMode = 'mask';
-let toolStrength = 12;
-let toolColor = '#000000';
+//
+// Tool state used to live in module-locals here. As of the v1.2 batch-detect
+// feature it's hoisted to state.ui.redact so the queue's batch panel and
+// the editor's side panel both read/write the same source of truth.
+// These tiny accessors keep the surrounding code readable.
+function toolMode()     { return (getState().ui.redact && getState().ui.redact.mode)     || 'mask'; }
+function toolStrength() { return (getState().ui.redact && getState().ui.redact.strength) || 12; }
+function toolColor()    { return (getState().ui.redact && getState().ui.redact.color)    || '#000000'; }
+function setToolMode(v)     { update(s => { s.ui.redact.mode     = v; }); }
+function setToolStrength(v) { update(s => { s.ui.redact.strength = v; }); }
+function setToolColor(v)    { update(s => { s.ui.redact.color    = v; }); }
 
 let drawing = null; // { x1, y1, x2, y2 } in source-pixel space
 
@@ -64,7 +72,13 @@ function handleStateChange() {
   const want = s.ui.view === 'editor' && s.ui.activeTool === 'redact';
   if (want && !active) activate();
   else if (!want && active) deactivate();
-  else if (want && active) syncPanelFromSelection();
+  else if (want && active) {
+    syncPanelFromSelection();
+    // When the batch panel mutates state.ui.redact (or selection sync
+    // changed it), reflect that in the editor-side controls.
+    syncModeBtns();
+    syncSensitivityBtns();
+  }
 }
 
 // When the user selects an existing redact overlay (via the Overlays panel
@@ -80,13 +94,13 @@ function syncPanelFromSelection() {
   if (!id) return;
   const o = getOverlay(img, id);
   if (!o || o.type !== 'redact') return;
-  if (o.mode && o.mode !== toolMode) {
-    toolMode = o.mode;
+  if (o.mode && o.mode !== toolMode()) {
+    setToolMode(o.mode);
     syncModeBtns();
   }
   const sNum = Number(o.strength);
-  if (Number.isFinite(sNum) && sNum !== toolStrength) {
-    toolStrength = sNum;
+  if (Number.isFinite(sNum) && sNum !== toolStrength()) {
+    setToolStrength(sNum);
     panelEls.strengthInput.value = String(sNum);
     panelEls.strengthReadout.textContent = String(Math.round(sNum));
   }
@@ -166,9 +180,9 @@ function up(_e) {
   const img = getActiveImage();
   if (!img) return;
   const overlay = newRedactOverlay(x, y, w, h, {
-    mode: toolMode,
-    strength: toolStrength,
-    color: toolColor,
+    mode: toolMode(),
+    strength: toolStrength(),
+    color: toolColor(),
   });
   withOverlaysHistory('Redact region', img.id, state => {
     const target = state.images[img.id];
@@ -200,8 +214,8 @@ function drawInProgress(ctx, _canvas) {
   }
   drawRedact(ctx, {
     x, y, w, h,
-    mode: toolMode,
-    strength: toolStrength,
+    mode: toolMode(),
+    strength: toolStrength(),
   });
   ctx.restore();
 }
@@ -236,7 +250,7 @@ function renderPanel() {
                     : t('redactModeBlur');
     btn.setAttribute('aria-label', btn.textContent);
     btn.addEventListener('click', () => {
-      toolMode = mode;
+      setToolMode(mode);
       syncModeBtns();
       patchSelectedRedact({ mode });
     });
@@ -258,14 +272,14 @@ function renderPanel() {
   strengthInput.min = String(MIN_STRENGTH);
   strengthInput.max = String(MAX_STRENGTH);
   strengthInput.step = '1';
-  strengthInput.value = String(toolStrength);
+  strengthInput.value = String(toolStrength());
   strengthInput.className = 'redact-strength';
   strengthInput.setAttribute('aria-label', t('redactStrengthAria'));
   strengthRow.appendChild(strengthInput);
   const strengthReadout = document.createElement('span');
   strengthReadout.className = 'redact-strength-readout';
   strengthReadout.setAttribute('aria-live', 'polite');
-  strengthReadout.textContent = String(toolStrength);
+  strengthReadout.textContent = String(toolStrength());
   strengthRow.appendChild(strengthReadout);
   root.appendChild(strengthRow);
 
@@ -277,15 +291,49 @@ function renderPanel() {
   colorRow.appendChild(colorLabel);
   const colorInput = document.createElement('input');
   colorInput.type = 'color';
-  colorInput.value = toolColor;
+  colorInput.value = toolColor();
   colorInput.className = 'redact-color';
   colorInput.setAttribute('aria-label', t('redactColor'));
   colorInput.addEventListener('input', () => {
-    toolColor = colorInput.value || '#000000';
-    patchSelectedRedact({ color: toolColor });
+    const next = colorInput.value || '#000000';
+    setToolColor(next);
+    patchSelectedRedact({ color: next });
   });
   colorRow.appendChild(colorInput);
   root.appendChild(colorRow);
+
+  // Sensitivity row for the AI-detect buttons below. Three preset chips
+  // (Strict / Normal / Loose) controlling state.ui.aiDetectSensitivity.
+  // Shared between Auto-detect faces and Detect text — they're both AI
+  // detections of "things on the canvas," and one global knob keeps the
+  // panel from getting overwhelmed. Mapping to per-model thresholds lives
+  // in js/ops/faceDetect.js + js/ops/textDetect.js.
+  const sensitivityRow = document.createElement('div');
+  sensitivityRow.className = 'redact-row redact-sensitivity-row';
+  const sensitivityLabel = document.createElement('span');
+  sensitivityLabel.textContent = t('redactDetectSensitivity');
+  sensitivityRow.appendChild(sensitivityLabel);
+  const sensitivityGroup = document.createElement('div');
+  sensitivityGroup.className = 'redact-sensitivity-group';
+  const sensitivityBtns = {};
+  for (const level of ['strict', 'normal', 'loose']) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `redact-sensitivity redact-sensitivity-${level}`;
+    btn.dataset.level = level;
+    const labelKey = 'redactDetectSensitivity' + level[0].toUpperCase() + level.slice(1);
+    btn.textContent = t(labelKey);
+    btn.setAttribute('aria-label', btn.textContent);
+    btn.setAttribute('aria-pressed', 'false');
+    btn.addEventListener('click', () => {
+      update(s => { s.ui.aiDetectSensitivity = level; });
+      syncSensitivityBtns();
+    });
+    sensitivityGroup.appendChild(btn);
+    sensitivityBtns[level] = btn;
+  }
+  sensitivityRow.appendChild(sensitivityGroup);
+  root.appendChild(sensitivityRow);
 
   // Auto-detect faces button (v1.2 Feature 1). Runs the vendored BlazeFace
   // ONNX against the source bitmap, one mask redact overlay per detected
@@ -334,19 +382,38 @@ function renderPanel() {
   root.appendChild(hint);
 
   setToolPanel(root, { owner: 'redact' });
-  panelEls = { modeBtns, strengthInput, strengthReadout, applyBtn, strengthRow, colorRow, colorInput };
+  panelEls = {
+    modeBtns, strengthInput, strengthReadout, applyBtn,
+    strengthRow, colorRow, colorInput,
+    sensitivityBtns,
+  };
   // Apply initial show/hide for the new color/strength rows.
   syncModeBtns();
+  syncSensitivityBtns();
 
   strengthInput.addEventListener('input', () => {
     const n = clampStrength(Number(strengthInput.value));
     if (!Number.isFinite(n)) return;
-    toolStrength = n;
+    setToolStrength(n);
     strengthReadout.textContent = String(Math.round(n));
     patchSelectedRedact({ strength: n });
   });
 
   syncModeBtns();
+}
+
+// Sync the active state on the three sensitivity preset chips from
+// state.ui.aiDetectSensitivity.
+function syncSensitivityBtns() {
+  if (!panelEls || !panelEls.sensitivityBtns) return;
+  const level = (getState().ui && getState().ui.aiDetectSensitivity) || 'normal';
+  for (const k of ['strict', 'normal', 'loose']) {
+    const btn = panelEls.sensitivityBtns[k];
+    if (!btn) continue;
+    const active = k === level;
+    btn.classList.toggle('is-active', active);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  }
 }
 
 // Apply a patch to the currently-selected overlay IF it's a redact owned by
@@ -371,14 +438,24 @@ function patchSelectedRedact(patch) {
 
 function syncModeBtns() {
   if (!panelEls) return;
-  for (const mode of REDACT_MODES) {
-    const btn = panelEls.modeBtns[mode];
+  const mode = toolMode();
+  for (const m of REDACT_MODES) {
+    const btn = panelEls.modeBtns[m];
     if (!btn) continue;
-    btn.classList.toggle('is-active', mode === toolMode);
+    btn.classList.toggle('is-active', m === mode);
   }
   // Strength is for blur/pixelate only; color is for mask only.
-  if (panelEls.strengthRow) panelEls.strengthRow.hidden = toolMode === 'mask';
-  if (panelEls.colorRow)    panelEls.colorRow.hidden    = toolMode !== 'mask';
+  if (panelEls.strengthRow) panelEls.strengthRow.hidden = mode === 'mask';
+  if (panelEls.colorRow)    panelEls.colorRow.hidden    = mode !== 'mask';
+  // Keep input values in sync with state (e.g. when batch panel changed them).
+  if (panelEls.strengthInput && document.activeElement !== panelEls.strengthInput) {
+    const s = toolStrength();
+    panelEls.strengthInput.value = String(s);
+    if (panelEls.strengthReadout) panelEls.strengthReadout.textContent = String(Math.round(s));
+  }
+  if (panelEls.colorInput && document.activeElement !== panelEls.colorInput) {
+    panelEls.colorInput.value = toolColor();
+  }
 }
 
 function clampStrength(n) {
@@ -408,9 +485,10 @@ async function onDetectFaces(btn) {
   const prevDisabled = btn.disabled;
   btn.disabled = true;
   btn.textContent = t('redactDetectRunning');
+  const sensitivity = (getState().ui && getState().ui.aiDetectSensitivity) || 'normal';
   let rects;
   try {
-    rects = await detectFaces(bitmap);
+    rects = await detectFaces(bitmap, { sensitivity });
   } catch (err) {
     btn.disabled = prevDisabled;
     btn.textContent = prevLabel;
@@ -433,14 +511,23 @@ async function onDetectFaces(btn) {
 
   // Add one redact overlay per detected face. All under a SINGLE history
   // transaction so a Ctrl+Z reverts the whole batch in one step.
+  //
+  // We pass the user's CURRENT tool settings (mode + color + strength) so
+  // detection produces redacts that match what they were about to draw by
+  // hand. So a user in pixelate mode at strength 24 gets pixelated faces,
+  // not always-black masks. The color setting only matters for mask mode
+  // (newRedactOverlay stores it regardless, the renderer ignores it for
+  // blur/pixelate).
+  const mode = toolMode();
+  const color = toolColor();
+  const strength = toolStrength();
   withOverlaysHistory(`Auto-redact ${rects.length} face${rects.length === 1 ? '' : 's'}`, img.id, state => {
     const target = state.images[img.id];
     if (!target) return;
     for (const r of rects) {
       if (r.w < 4 || r.h < 4) continue; // skip degenerate detections
       const overlay = newRedactOverlay(r.x, r.y, r.w, r.h, {
-        mode: 'mask',
-        color: toolColor,
+        mode, color, strength,
       });
       addOverlay(target, overlay);
     }
@@ -487,9 +574,10 @@ async function onDetectText(btn) {
     btn.textContent = t('redactDetectTextProgress', { progress: pct });
   };
 
+  const sensitivity = (getState().ui && getState().ui.aiDetectSensitivity) || 'normal';
   let rects;
   try {
-    rects = await detectText(bitmap, { progress: onProgress });
+    rects = await detectText(bitmap, { progress: onProgress, sensitivity });
   } catch (err) {
     btn.disabled = prevDisabled;
     btn.textContent = prevLabel;
@@ -511,15 +599,18 @@ async function onDetectText(btn) {
   }
 
   // Add one redact overlay per detected text line. Single history
-  // transaction → Ctrl+Z reverts the whole batch.
+  // transaction → Ctrl+Z reverts the whole batch. Same passthrough rule
+  // as onDetectFaces: respect the user's current tool settings.
+  const mode = toolMode();
+  const color = toolColor();
+  const strength = toolStrength();
   withOverlaysHistory(`Auto-redact ${rects.length} text line${rects.length === 1 ? '' : 's'}`, img.id, state => {
     const target = state.images[img.id];
     if (!target) return;
     for (const r of rects) {
       if (r.w < 4 || r.h < 4) continue; // skip degenerate detections
       const overlay = newRedactOverlay(r.x, r.y, r.w, r.h, {
-        mode: 'mask',
-        color: toolColor,
+        mode, color, strength,
       });
       addOverlay(target, overlay);
     }
@@ -536,6 +627,12 @@ export function _resetForTest() {
   overlayCanvas = null;
   panelEls = null;
   drawing = null;
-  toolMode = 'blur';
-  toolStrength = 12;
+  // Reset hoisted state to defaults so the next test starts clean.
+  try {
+    update(s => {
+      s.ui.redact.mode = 'mask';
+      s.ui.redact.strength = 12;
+      s.ui.redact.color = '#000000';
+    });
+  } catch { /* ignore — test envs may have stubbed update */ }
 }
