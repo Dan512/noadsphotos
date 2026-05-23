@@ -15,12 +15,15 @@ import {
   hammingDistance,
   groupBySha256,
   clusterByDHash,
+  clusterByPerceptual,
   SENSITIVITY_THRESHOLDS,
   thresholdFor,
   pickKeeper,
   reorderQueueByCluster,
   computeDHashFromLuminance,
+  computePHashFromLuminance,
   rgbaToLuminance72,
+  rgbaToLuminance1024,
 } from '../../js/ops/dedupe.js';
 
 // ---------------------------------------------------------------- popcount32
@@ -380,6 +383,108 @@ test('computeDHashFromLuminance: similar luminance arrays produce small Hamming 
   // The perturbed pixel participates in at most 2 bit comparisons (i=34→35 and i=35→36).
   // So hamming distance should be 0, 1, or 2.
   assert.ok(hammingDistance(ha, hb) <= 2);
+});
+
+// ------------------------------------------- computePHashFromLuminance
+
+test('computePHashFromLuminance: rejects wrong-length input', () => {
+  assert.throws(() => computePHashFromLuminance(new Uint8Array(1023)));
+  assert.throws(() => computePHashFromLuminance(null));
+});
+
+test('computePHashFromLuminance: identical inputs → identical hashes', () => {
+  const lumA = new Uint8Array(1024);
+  for (let i = 0; i < 1024; i++) lumA[i] = (i * 13) & 0xff; // arbitrary pattern
+  const lumB = new Uint8Array(lumA);
+  const ha = computePHashFromLuminance(lumA);
+  const hb = computePHashFromLuminance(lumB);
+  assert.equal(hammingDistance(ha, hb), 0);
+});
+
+test('computePHashFromLuminance: small perturbation → small Hamming distance', () => {
+  const lumA = new Uint8Array(1024);
+  for (let i = 0; i < 1024; i++) lumA[i] = (i * 11) & 0xff;
+  const lumB = new Uint8Array(lumA);
+  // Flip a handful of pixels — should change LOW-FREQUENCY DCT a bit but
+  // not catastrophically. Expect distance well under 32 (50% of bits).
+  for (let i = 100; i < 110; i++) lumB[i] = (lumB[i] + 50) & 0xff;
+  const ha = computePHashFromLuminance(lumA);
+  const hb = computePHashFromLuminance(lumB);
+  assert.ok(hammingDistance(ha, hb) < 32);
+});
+
+test('computePHashFromLuminance: unrelated noise patterns → large Hamming distance', () => {
+  const lumA = new Uint8Array(1024);
+  const lumB = new Uint8Array(1024);
+  for (let i = 0; i < 1024; i++) {
+    lumA[i] = (i * 17 + 7) & 0xff;     // one pattern
+    lumB[i] = (i * 41 + 200) & 0xff;   // unrelated pattern
+  }
+  const ha = computePHashFromLuminance(lumA);
+  const hb = computePHashFromLuminance(lumB);
+  // Large but bounded by 64.
+  assert.ok(hammingDistance(ha, hb) > 16);
+  assert.ok(hammingDistance(ha, hb) <= 64);
+});
+
+// ------------------------------------------- clusterByPerceptual
+
+test('clusterByPerceptual: clusters via dHash even when phash differs', () => {
+  const items = [
+    { id: 'a', dhash: { hi: 0, lo: 0 }, phash: { hi: 0, lo: 0x12345678 | 0 } },
+    { id: 'b', dhash: { hi: 0, lo: 0 }, phash: { hi: 0, lo: 0x87654321 | 0 } }, // very different phash, identical dhash
+  ];
+  const groups = clusterByPerceptual(items, 4);
+  assert.equal(groups.length, 1);
+  assert.deepEqual(groups[0].sort(), ['a', 'b']);
+});
+
+test('clusterByPerceptual: clusters via pHash even when dhash differs', () => {
+  const items = [
+    { id: 'a', dhash: { hi: 0, lo: 0x12345678 | 0 }, phash: { hi: 0, lo: 0 } },
+    { id: 'b', dhash: { hi: 0, lo: 0x87654321 | 0 }, phash: { hi: 0, lo: 0 } }, // very different dhash, identical phash
+  ];
+  const groups = clusterByPerceptual(items, 4);
+  assert.equal(groups.length, 1);
+  assert.deepEqual(groups[0].sort(), ['a', 'b']);
+});
+
+test('clusterByPerceptual: missing dhash/phash falls back to the other', () => {
+  const items = [
+    { id: 'a', dhash: { hi: 0, lo: 0 } },                // pHash missing
+    { id: 'b', dhash: { hi: 0, lo: 0 } },                // pHash missing
+    { id: 'c', phash: { hi: 0, lo: 0 } },                // dHash missing
+    { id: 'd', phash: { hi: 0, lo: 0 } },                // dHash missing
+  ];
+  const groups = clusterByPerceptual(items, 4);
+  // a+b cluster via dhash. c+d cluster via phash. Not a+b+c+d (a has no
+  // phash to compare against c's phash, etc).
+  assert.equal(groups.length, 2);
+});
+
+test('clusterByPerceptual: items with neither hash are dropped', () => {
+  const items = [
+    { id: 'a' },
+    { id: 'b', dhash: { hi: 0, lo: 0 } },
+    { id: 'c', dhash: { hi: 0, lo: 0 } },
+  ];
+  const groups = clusterByPerceptual(items, 4);
+  assert.equal(groups.length, 1);
+  assert.deepEqual(groups[0].sort(), ['b', 'c']);
+});
+
+// --------------------------------------------------- rgbaToLuminance1024
+
+test('rgbaToLuminance1024: pure-white → 255', () => {
+  const rgba = new Uint8ClampedArray(1024 * 4).fill(255);
+  const lum = rgbaToLuminance1024(rgba);
+  assert.equal(lum[0], 255);
+  assert.equal(lum[1023], 255);
+});
+
+test('rgbaToLuminance1024: rejects short input', () => {
+  assert.throws(() => rgbaToLuminance1024(new Uint8Array(100)));
+  assert.throws(() => rgbaToLuminance1024(null));
 });
 
 // --------------------------------------------------- rgbaToLuminance72

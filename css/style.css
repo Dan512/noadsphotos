@@ -2981,3 +2981,38 @@ dialog.heic-consent-dialog p {
 .batch-redact-text {
   margin-top: var(--space-sm);
 }
+
+/* OCR preview-select section inside the redact tool's side panel.
+   Shown only when state.ui.ocrPreview.active is true. The buttons
+   replace the normal Apply flow for the duration of the preview. */
+.editor-panel .redact-ocr-preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin-top: var(--space-sm);
+  padding: var(--space-sm);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: var(--radius-control);
+}
+.editor-panel .redact-ocr-preview-status {
+  margin: 0 0 var(--space-xs);
+  font-size: var(--t-sm);
+  color: var(--text-secondary);
+}
+.editor-panel .redact-ocr-apply-selected,
+.editor-panel .redact-ocr-apply-all,
+.editor-panel .redact-ocr-cancel {
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: var(--t-sm);
+  cursor: pointer;
+}
+.editor-panel .redact-ocr-apply-selected:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

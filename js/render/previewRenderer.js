@@ -13,6 +13,7 @@
 //   - Async bitmap retry: if ensureBitmap hasn't resolved, mark baseDirty so
 //     the next frame retries after the decode commits.
 import { getState, subscribe, update } from './../state.js';
+// Note: update is used by both compare-drag and OCR preview toggle.
 import { markClean } from './renderCache.js';
 import { cssFilterString } from '../ops/adjust.js';
 import { drawText } from '../ops/text.js';
@@ -167,17 +168,15 @@ let lastDrawState = null;
 // transform sequence used by drawBase / drawOverlays so the inverse used by
 // canvasToSource stays in step.
 function sourceToCanvasInternal(p, ds) {
-  // 1. Subtract crop origin so the cropped area's top-left maps to (0,0) in
-  //    pre-rotation source space.
+  // Matches drawBase's chain (numbered same as the comment there).
+  // 1. Subtract crop origin so the cropped area's top-left maps to (0,0)
+  //    in source space.
   let x = p.x - ds.srcX - ds.srcW / 2;
   let y = p.y - ds.srcY - ds.srcH / 2;
-  // 2. Apply flip (negative scale) in source space.
+  // 2. Apply flip (source frame).
   if (ds.flipH) x = -x;
   if (ds.flipV) y = -y;
-  // 3. Scale source pixels → canvas pixels.
-  x *= ds.drawScale;
-  y *= ds.drawScale;
-  // 4. Apply rotation around the canvas center.
+  // 3. Apply rotation (still source-pixel units).
   if (ds.rot) {
     const rad = ds.rot * Math.PI / 180;
     const cos = Math.cos(rad);
@@ -186,7 +185,10 @@ function sourceToCanvasInternal(p, ds) {
     const ry = x * sin + y * cos;
     x = rx; y = ry;
   }
-  // 5. Translate to the canvas center.
+  // 4. Aspect-fit scale (non-uniform when resize squishes the image).
+  x *= ds.aspectScaleX;
+  y *= ds.aspectScaleY;
+  // 5. Translate to canvas center.
   x += ds.canvasW / 2;
   y += ds.canvasH / 2;
   return { x, y };
@@ -233,10 +235,13 @@ function sourceRectToCanvasAABB(r, ds) {
 export function applySourceTransform(ctx) {
   const ds = lastDrawState;
   if (!ds || !ctx) return false;
+  // Match drawBase's chain (see comment there for ordering rationale).
+  // Caller draws in source-pixel coords; we ensure they land in the same
+  // canvas pixels the base bitmap occupies, including any aspect squish.
   ctx.translate(ds.canvasW / 2, ds.canvasH / 2);
+  ctx.scale(ds.aspectScaleX, ds.aspectScaleY);
   if (ds.rot) ctx.rotate(ds.rot * Math.PI / 180);
   if (ds.flipH || ds.flipV) ctx.scale(ds.flipH ? -1 : 1, ds.flipV ? -1 : 1);
-  ctx.scale(ds.drawScale, ds.drawScale);
   ctx.translate(-ds.srcX - ds.srcW / 2, -ds.srcY - ds.srcH / 2);
   return true;
 }
@@ -286,7 +291,11 @@ export function canvasToSource(p) {
   // Reverse step 5: subtract canvas center.
   let x = ix - ds.canvasW / 2;
   let y = iy - ds.canvasH / 2;
-  // Reverse step 4: inverse rotation.
+  // Reverse step 4: undo aspect-fit scale.
+  if (!ds.aspectScaleX || !ds.aspectScaleY) return null;
+  x /= ds.aspectScaleX;
+  y /= ds.aspectScaleY;
+  // Reverse step 3: inverse rotation.
   if (ds.rot) {
     const rad = -ds.rot * Math.PI / 180;
     const cos = Math.cos(rad);
@@ -295,10 +304,6 @@ export function canvasToSource(p) {
     const ry = x * sin + y * cos;
     x = rx; y = ry;
   }
-  // Reverse step 3: divide by drawScale to recover source pixels.
-  if (!ds.drawScale) return null;
-  x /= ds.drawScale;
-  y /= ds.drawScale;
   // Reverse step 2: inverse flip.
   if (ds.flipH) x = -x;
   if (ds.flipV) y = -y;
@@ -448,14 +453,27 @@ export function initPreviewRenderer(lifecycle, caps) {
     const canvasW = baseCanvas.width;
     const canvasH = baseCanvas.height;
     if (!canvasW || !canvasH || !outW || !outH) return null;
-    const drawScale = Math.min(canvasW / outW, canvasH / outH);
-    const drawW = src.w * drawScale;
-    const drawH = src.h * drawScale;
+    // v1.2.x: per-axis aspect-fit scale. When resize.mode === 'exact' with
+    // mismatched dims, aspectScaleX ≠ aspectScaleY and the bitmap squishes
+    // to fill the canvas — matching what the export pipeline does.
+    // `drawScale` (uniform, min of the two) is kept for the few consumers
+    // that still need a single scalar (blur radius, zoom calc).
+    const aspectScaleX = canvasW / outW;
+    const aspectScaleY = canvasH / outH;
+    const drawScale = Math.min(aspectScaleX, aspectScaleY);
     return {
       canvasW, canvasH,
       srcX: src.x, srcY: src.y, srcW: src.w, srcH: src.h,
+      outW, outH,
       rot, flipH: !!flipH, flipV: !!flipV,
-      drawScale, drawW, drawH,
+      aspectScaleX, aspectScaleY,
+      // Back-compat aliases — code that hasn't been updated to per-axis
+      // semantics still works (using the uniform min). drawW/drawH are
+      // computed as if no aspect change so the pixelation-pre-pass
+      // threshold reads sensibly.
+      drawScale,
+      drawW: src.w * drawScale,
+      drawH: src.h * drawScale,
     };
   }
 
@@ -485,15 +503,22 @@ export function initPreviewRenderer(lifecycle, caps) {
     baseCtx.imageSmoothingEnabled = true;
     baseCtx.imageSmoothingQuality = 'high';
     baseCtx.save();
-    // Translate to canvas center, apply rotation + flip, then draw the
-    // cropped source centered on (0, 0).
+    // Transform chain (innermost → outermost; ctx applies last-set first):
+    //   1. drawImage centered at (0, 0) at SOURCE dimensions
+    //   2. flip (source frame)
+    //   3. rotate (still source frame)
+    //   4. aspect-fit scale — moves into canvas frame; non-uniform when
+    //      resize.mode === 'exact' with mismatched dims, so the bitmap
+    //      squishes to fill instead of letterboxing
+    //   5. translate to canvas center
     baseCtx.translate(ds.canvasW / 2, ds.canvasH / 2);
+    baseCtx.scale(ds.aspectScaleX, ds.aspectScaleY);
     if (ds.rot) baseCtx.rotate(ds.rot * Math.PI / 180);
     if (ds.flipH || ds.flipV) baseCtx.scale(ds.flipH ? -1 : 1, ds.flipV ? -1 : 1);
     baseCtx.drawImage(
       sourceImage,
       ds.srcX, ds.srcY, ds.srcW, ds.srcH,
-      -ds.drawW / 2, -ds.drawH / 2, ds.drawW, ds.drawH,
+      -ds.srcW / 2, -ds.srcH / 2, ds.srcW, ds.srcH,
     );
     baseCtx.restore();
 
@@ -742,16 +767,16 @@ export function initPreviewRenderer(lifecycle, caps) {
     const overlays = img && Array.isArray(img.overlays) ? img.overlays : null;
     if (ds && overlays && overlays.length > 0) {
       overlayCtx.save();
-      // Same transform as drawBase: center → rotate → flip → scale to source.
+      // Same transform as drawBase (see comment there): aspect-fit scale
+      // is OUTERMOST so overlays squish in lockstep with the bitmap when
+      // resize.mode === 'exact' with mismatched dims.
       overlayCtx.translate(ds.canvasW / 2, ds.canvasH / 2);
+      overlayCtx.scale(ds.aspectScaleX, ds.aspectScaleY);
       if (ds.rot) overlayCtx.rotate(ds.rot * Math.PI / 180);
       if (ds.flipH || ds.flipV) overlayCtx.scale(ds.flipH ? -1 : 1, ds.flipV ? -1 : 1);
-      // Scale source pixels → canvas pixels.
-      overlayCtx.scale(ds.drawScale, ds.drawScale);
-      // The drawImage call uses `-ds.drawW / 2` as its top-left, which in
-      // source pixels is `-ds.srcW/2`. Subtract crop origin so source-pixel
-      // coordinate (srcX, srcY) lands exactly where the cropped region's
-      // top-left lands in the base canvas.
+      // The overlay drawers operate in source-pixel coords; subtract the
+      // crop origin so coordinate (srcX, srcY) lands at the cropped
+      // region's top-left in the canvas.
       overlayCtx.translate(-ds.srcX - ds.srcW / 2, -ds.srcY - ds.srcH / 2);
       // The selected redact overlay gets its dashed bounding-box + label
       // drawn here so the user can see what they're editing. The actual
@@ -790,6 +815,11 @@ export function initPreviewRenderer(lifecycle, caps) {
       }
     }
 
+    // v1.2.x OCR preview-select mode: draw a translucent box per detected
+    // line in state.ui.ocrPreview.lines. Yellow when unselected, red when
+    // selected. Source-pixel coordinates → use applySourceTransform.
+    drawOcrPreview(img);
+
     // Per-tool overlay drawer (crop tool, etc.) gets the last word so it can
     // paint UI on top of any committed overlays.
     if (overlayDrawer) {
@@ -799,6 +829,44 @@ export function initPreviewRenderer(lifecycle, caps) {
         console.error('previewRenderer: overlay drawer threw', err);
       }
     }
+  }
+
+  // Draw the OCR preview boxes (yellow for unselected, red for selected)
+  // when state.ui.ocrPreview.active is true and the active image matches.
+  // Each box is a translucent fill + 1.5px stroke in canvas-pixel space
+  // (so line width stays constant across zoom).
+  function drawOcrPreview(img) {
+    if (!overlayCtx) return;
+    const s = getState();
+    const p = s.ui && s.ui.ocrPreview;
+    if (!p || !p.active || !p.imageId || p.imageId !== img.id) return;
+    const lines = Array.isArray(p.lines) ? p.lines : [];
+    if (lines.length === 0) return;
+    const ds = lastDrawState;
+    if (!ds) return;
+
+    overlayCtx.save();
+    overlayCtx.setTransform(1, 0, 0, 1, 0, 0);
+    overlayCtx.lineWidth = 1.5;
+    for (const line of lines) {
+      if (!line || !line.rect) continue;
+      const rect = sourceRectToCanvasAABB(line.rect, ds);
+      if (!rect || rect.w <= 0 || rect.h <= 0) continue;
+      if (line.selected) {
+        // Selected: red translucent fill + solid red border.
+        overlayCtx.fillStyle   = 'rgba(220, 38, 38, 0.45)';
+        overlayCtx.strokeStyle = 'rgba(220, 38, 38, 0.95)';
+      } else {
+        // Unselected: yellow translucent fill + amber border. autoFlag
+        // gets a slightly bolder border so the user sees "this is a
+        // candidate worth checking."
+        overlayCtx.fillStyle   = 'rgba(250, 204, 21, 0.30)';
+        overlayCtx.strokeStyle = line.autoFlag ? 'rgba(217, 119, 6, 0.95)' : 'rgba(180, 138, 10, 0.85)';
+      }
+      overlayCtx.fillRect(rect.x, rect.y, rect.w, rect.h);
+      overlayCtx.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.w - 1, rect.h - 1);
+    }
+    overlayCtx.restore();
   }
 
   // Draw a 1px dashed outline around every overlay's bounding box. Used by
@@ -996,11 +1064,62 @@ export function initPreviewRenderer(lifecycle, caps) {
   const tryAttachCompareDrag = () => {
     if (bindDom()) {
       attachCompareDragHandlers(overlayCanvas);
+      attachOcrPreviewClickHandler(overlayCanvas);
     } else {
       requestAnimationFrame(tryAttachCompareDrag);
     }
   };
   tryAttachCompareDrag();
+
+  // v1.2.x OCR preview-select mode click handler. When the user is in
+  // preview mode and clicks the overlay canvas, find which detected line
+  // (if any) the click landed inside and toggle its selected flag. Uses
+  // capture-phase + stopImmediatePropagation so the redact tool's normal
+  // pointerdown (which would start a freehand drag) doesn't also fire.
+  function attachOcrPreviewClickHandler(canvas) {
+    if (!canvas) return;
+
+    function onDown(e) {
+      const s = getState();
+      const p = s.ui && s.ui.ocrPreview;
+      if (!p || !p.active || !p.imageId) return;
+      // Click position in canvas-internal pixel coords.
+      const rect = canvas.getBoundingClientRect();
+      const cssX = e.clientX - rect.left;
+      const cssY = e.clientY - rect.top;
+      if (!canvas.width || !canvas.height || !rect.width || !rect.height) return;
+      const ix = (cssX / rect.width)  * canvas.width;
+      const iy = (cssY / rect.height) * canvas.height;
+      // Walk lines in REVERSE so a click on the visually-topmost line
+      // (last in array = drawn last = on top in z-order) wins. Lines
+      // rarely overlap in practice but it's the safe default.
+      const ds = lastDrawState;
+      if (!ds) return;
+      for (let i = p.lines.length - 1; i >= 0; i--) {
+        const line = p.lines[i];
+        if (!line || !line.rect) continue;
+        const r = sourceRectToCanvasAABB(line.rect, ds);
+        if (!r) continue;
+        if (ix >= r.x && ix <= r.x + r.w && iy >= r.y && iy <= r.y + r.h) {
+          // Hit — toggle selection and consume the event.
+          const idx = i;
+          update(state => {
+            const lines = state.ui.ocrPreview.lines;
+            if (idx >= 0 && idx < lines.length) {
+              lines[idx].selected = !lines[idx].selected;
+            }
+          });
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          return;
+        }
+      }
+      // Click missed all preview boxes — let the active tool handle it
+      // (or absorb harmlessly if no tool's listening). No action here.
+    }
+
+    canvas.addEventListener('pointerdown', onDown, true);
+  }
 
   function attachCompareDragHandlers(canvas) {
     if (!canvas) return;
@@ -1072,6 +1191,7 @@ export function initPreviewRenderer(lifecycle, caps) {
   let lastSmoothBrush = null;
   let lastCompareMode = false;
   let lastCompareSplit = 0.5;
+  let lastOcrPreviewKey = '';
   subscribe(() => {
     const s = getState();
     if (s.ui.view === 'editor') {
@@ -1104,6 +1224,20 @@ export function initPreviewRenderer(lifecycle, caps) {
           lastCompareMode = cm;
           lastCompareSplit = cs;
           s.images[id].baseDirty = true;
+        }
+        // v1.2.x OCR preview: any change to the preview slice (entering,
+        // exiting, line toggle) needs an overlay re-paint. We don't try
+        // to deep-diff the lines array; just re-paint on any change to
+        // active/imageId/lines-length/lines-selection-sum (cheap proxy
+        // that captures all the cases we care about).
+        const op = s.ui.ocrPreview || {};
+        const opActive = !!op.active;
+        const opLines = Array.isArray(op.lines) ? op.lines : [];
+        const opSelectedCount = opLines.reduce((n, l) => n + (l && l.selected ? 1 : 0), 0);
+        const opKey = opActive + '|' + (op.imageId || '') + '|' + opLines.length + '|' + opSelectedCount;
+        if (opKey !== lastOcrPreviewKey) {
+          lastOcrPreviewKey = opKey;
+          s.images[id].overlaysDirty = true;
         }
       }
     }

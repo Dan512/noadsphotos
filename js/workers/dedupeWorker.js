@@ -22,7 +22,12 @@
 // worker continues with the remaining items. Catastrophic worker errors
 // (e.g., out of memory) propagate via the standard onerror channel.
 
-import { computeDHashFromLuminance, rgbaToLuminance72 } from '../ops/dedupe.js';
+import {
+  computeDHashFromLuminance,
+  rgbaToLuminance72,
+  computePHashFromLuminance,
+  rgbaToLuminance1024,
+} from '../ops/dedupe.js';
 
 self.addEventListener('message', async (event) => {
   const msg = event && event.data;
@@ -35,9 +40,10 @@ self.addEventListener('message', async (event) => {
     try {
       if (!item || !item.id) throw new Error('missing item id');
       const sha256 = await hashSourceBytes(item.sourceBlob);
-      const dhash  = await hashThumbnail(item.thumbBlob);
+      const { dhash, phash } = await hashThumbnail(item.thumbBlob);
       payload.sha256 = sha256;
       payload.dhash  = dhash;
+      payload.phash  = phash;
     } catch (err) {
       payload.error = (err && err.message) ? err.message : String(err);
     }
@@ -69,27 +75,43 @@ function bufToHex(arrayBuffer) {
   return out;
 }
 
-// --- dHash of thumbnail Blob ---------------------------------------------
+// --- dHash + pHash of thumbnail Blob --------------------------------------
+//
+// We do ONE createImageBitmap at 32×32 (the size pHash needs), then
+// derive the 9×8 dHash input by drawing that bitmap onto a smaller
+// canvas. Saves one decode pass per image vs. fetching the thumb twice.
 
 async function hashThumbnail(thumbBlob) {
   if (!thumbBlob) throw new Error('thumb blob unavailable');
-  // createImageBitmap is async + handles JPEG/PNG/WebP transparently.
-  // resizeWidth/resizeHeight option asks the browser to do the downsample
-  // for us (faster than drawing to a separate canvas first).
-  const bitmap = await createImageBitmap(thumbBlob, {
-    resizeWidth: 9,
-    resizeHeight: 8,
+  const bitmap32 = await createImageBitmap(thumbBlob, {
+    resizeWidth: 32,
+    resizeHeight: 32,
     resizeQuality: 'high',
   });
   try {
-    const off = new OffscreenCanvas(9, 8);
-    const ctx = off.getContext('2d', { willReadFrequently: true });
-    if (!ctx) throw new Error('no 2d context in worker');
-    ctx.drawImage(bitmap, 0, 0, 9, 8);
-    const { data } = ctx.getImageData(0, 0, 9, 8);
-    const lum = rgbaToLuminance72(data);
-    return computeDHashFromLuminance(lum);
+    // 32×32 → pHash (DCT-based).
+    const big = new OffscreenCanvas(32, 32);
+    const ctxBig = big.getContext('2d', { willReadFrequently: true });
+    if (!ctxBig) throw new Error('no 2d context in worker');
+    ctxBig.drawImage(bitmap32, 0, 0, 32, 32);
+    const dataBig = ctxBig.getImageData(0, 0, 32, 32).data;
+    const lum1024 = rgbaToLuminance1024(dataBig);
+    const phash = computePHashFromLuminance(lum1024);
+
+    // 32×32 → 9×8 → dHash. Derived from the same source bitmap to avoid
+    // a second createImageBitmap call.
+    const small = new OffscreenCanvas(9, 8);
+    const ctxSmall = small.getContext('2d', { willReadFrequently: true });
+    if (!ctxSmall) throw new Error('no 2d context in worker (9×8)');
+    ctxSmall.imageSmoothingEnabled = true;
+    ctxSmall.imageSmoothingQuality = 'high';
+    ctxSmall.drawImage(bitmap32, 0, 0, 9, 8);
+    const dataSmall = ctxSmall.getImageData(0, 0, 9, 8).data;
+    const lum72 = rgbaToLuminance72(dataSmall);
+    const dhash = computeDHashFromLuminance(lum72);
+
+    return { dhash, phash };
   } finally {
-    if (bitmap && typeof bitmap.close === 'function') bitmap.close();
+    if (bitmap32 && typeof bitmap32.close === 'function') bitmap32.close();
   }
 }

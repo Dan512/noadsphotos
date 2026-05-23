@@ -24,6 +24,20 @@ const state = {
       strength: 12,          // blur radius / pixel block size (px in source space)
       color: '#000000',      // hex string, used by mask mode
     },
+    // v1.2.x OCR preview-select mode. When `active` is true, the redact
+    // tool's "Detect text" populates this slice with detected lines (in
+    // source-pixel coords) instead of immediately creating redact
+    // overlays. The renderer draws yellow boxes for unselected lines
+    // and red for selected; clicks on a box toggle its selection.
+    // PII-matching lines (email/phone/CC/SSN/IP) start pre-selected via
+    // the autoFlag set in textDetect.js.
+    //
+    // lines: [{ rect:{x,y,w,h}, text:string, selected:bool, autoFlag:bool }]
+    ocrPreview: {
+      active: false,
+      imageId: null,
+      lines: [],
+    },
   },
   queue:  [],
   images: Object.create(null),

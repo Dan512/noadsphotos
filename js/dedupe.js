@@ -30,33 +30,64 @@
 import { getState, update } from './state.js';
 import {
   groupBySha256,
-  clusterByDHash,
+  clusterByPerceptual,
   pickKeeper,
   reorderQueueByCluster,
   thresholdFor,
 } from './ops/dedupe.js';
 
-// --- Worker lifecycle ------------------------------------------------------
+// --- Worker pool -----------------------------------------------------------
+//
+// v1.2.x: parallel hashing across navigator.hardwareConcurrency workers
+// (capped at MAX_POOL_SIZE to avoid OOM on phones with claimed-but-anemic
+// cores). Each worker has its own ORT-free WASM/canvas context so they
+// run truly in parallel; the main thread distributes items round-robin
+// and waits for all workers to drain.
+//
+// GitHub Pages compatibility: no SharedArrayBuffer needed (workers
+// communicate purely via postMessage), so no COOP/COEP requirements.
+const MAX_POOL_SIZE = 4;
+let workerPool = null;
 
-let workerRef = null;
+// Snapshot of the MOST RECENT removeMarkedDuplicates() call, retained so
+// the global Ctrl+Z handler can restore. Cleared when:
+//   - restoreRemoved() runs (the user already restored, either via the
+//     toast Undo or via Ctrl+Z itself)
+//   - findDuplicates() runs again (new context invalidates old snapshot)
+//   - the queue is otherwise mutated (e.g. user removes an image
+//     individually; the snapshot's queue positions are no longer valid)
+// Only ONE snapshot is kept — we don't try to model a multi-level dedupe
+// undo stack, because subsequent removes are typically against newly
+// added images and the user can always re-import.
+let lastRemoveSnapshot = null;
 
-function getWorker() {
-  if (workerRef) return workerRef;
-  // Vite-friendly path. In a static-served NoAdsPhotos build (no bundler),
-  // the URL resolves against the document.
-  const url = new URL('./workers/dedupeWorker.js', import.meta.url);
-  workerRef = new Worker(url, { type: 'module' });
-  return workerRef;
+function getWorkerPool() {
+  if (workerPool) return workerPool;
+  // Pick pool size: respect navigator.hardwareConcurrency but cap at
+  // MAX_POOL_SIZE to avoid runaway memory on phones. Default to 2 if
+  // the global isn't available (older Safari).
+  const hc = (typeof navigator !== 'undefined' && Number.isFinite(navigator.hardwareConcurrency))
+    ? navigator.hardwareConcurrency : 2;
+  const size = Math.max(1, Math.min(MAX_POOL_SIZE, hc));
+  const workers = [];
+  for (let i = 0; i < size; i++) {
+    const url = new URL('./workers/dedupeWorker.js', import.meta.url);
+    workers.push(new Worker(url, { type: 'module' }));
+  }
+  workerPool = { workers, size };
+  return workerPool;
 }
 
 /**
- * Terminate the worker (for tests / hot reload). Safe to call when no
- * worker exists. Subsequent findDuplicates() calls re-spawn.
+ * Terminate all workers (for tests / hot reload). Safe to call when the
+ * pool doesn't exist. Next findDuplicates() respawns.
  */
 export function _resetWorker() {
-  if (workerRef) {
-    try { workerRef.terminate(); } catch { /* ignore */ }
-    workerRef = null;
+  if (workerPool) {
+    for (const w of workerPool.workers) {
+      try { w.terminate(); } catch { /* ignore */ }
+    }
+    workerPool = null;
   }
 }
 
@@ -85,6 +116,9 @@ export async function findDuplicates(opts = {}) {
   if (getState().dedupe.active) {
     cancelFindMode();
   }
+  // Any prior removal snapshot is moot now — a new find/remove cycle is
+  // about to start.
+  lastRemoveSnapshot = null;
 
   const s = getState();
   const queueIds = s.queue.slice();
@@ -97,7 +131,7 @@ export async function findDuplicates(opts = {}) {
   for (const id of queueIds) {
     const img = s.images[id];
     if (!img) continue;
-    if (img._hashes && img._hashes.sha256 && img._hashes.dhash) continue;
+    if (img._hashes && img._hashes.sha256 && img._hashes.dhash && img._hashes.phash) continue;
     const sourceBlob = (img.source && img.source.blob) || null;
     const thumbBlob  = (img.source && img.source.thumbnail) || sourceBlob;
     if (!sourceBlob) continue; // skip images without source bytes
@@ -115,7 +149,7 @@ export async function findDuplicates(opts = {}) {
     const img = s.images[id];
     const h = img && img._hashes;
     if (!h) continue;
-    items.push({ id, sha256: h.sha256, dhash: h.dhash });
+    items.push({ id, sha256: h.sha256, dhash: h.dhash, phash: h.phash });
   }
 
   // 3. Cluster: exact first, then perceptual on the unmatched.
@@ -125,7 +159,7 @@ export async function findDuplicates(opts = {}) {
 
   const remainingItems = items.filter(it => !exactlyMatched.has(it.id));
   const threshold = thresholdFor(s.dedupe.sensitivity);
-  const perceptualGroups = clusterByDHash(remainingItems, threshold);
+  const perceptualGroups = clusterByPerceptual(remainingItems, threshold);
 
   const allGroups = exactGroups.concat(perceptualGroups);
   if (allGroups.length === 0) {
@@ -270,7 +304,34 @@ export function removeMarkedDuplicates() {
     }
   });
 
+  // Stash for the global Ctrl+Z handler. The 15s toast Undo also uses
+  // the snapshot returned from this function — whoever calls restore
+  // first wins; the other clears the stash via restoreRemoved().
+  lastRemoveSnapshot = snapshot;
+
   return snapshot;
+}
+
+/**
+ * Read-only check: does dedupe have a removal that Ctrl+Z can restore?
+ * Used by the global shortcut handler in shortcuts.js.
+ */
+export function hasUndoableRemove() {
+  return lastRemoveSnapshot !== null
+      && Array.isArray(lastRemoveSnapshot.removed)
+      && lastRemoveSnapshot.removed.length > 0;
+}
+
+/**
+ * Pop the stashed snapshot and call restoreRemoved on it. Returns true
+ * if anything was restored. Called from the Ctrl+Z handler in shortcuts.js.
+ */
+export function undoLastRemove() {
+  if (!hasUndoableRemove()) return false;
+  const snap = lastRemoveSnapshot;
+  lastRemoveSnapshot = null;
+  restoreRemoved(snap);
+  return true;
 }
 
 /**
@@ -280,6 +341,11 @@ export function removeMarkedDuplicates() {
  */
 export function restoreRemoved(snapshot) {
   if (!snapshot || !Array.isArray(snapshot.removed) || snapshot.removed.length === 0) return;
+  // Whoever calls restore first wins — clear the stash so Ctrl+Z doesn't
+  // also fire (and so a subsequent toast click is a no-op).
+  if (lastRemoveSnapshot === snapshot) {
+    lastRemoveSnapshot = null;
+  }
   update(state => {
     // Re-add to images.
     for (const r of snapshot.removed) {
@@ -311,29 +377,51 @@ export function restoreRemoved(snapshot) {
 }
 
 // --- Worker plumbing -------------------------------------------------------
-
+//
+// Distribute `items` across the worker pool round-robin. Each worker
+// processes its slice independently; the main thread aggregates per-item
+// progress events (writing the hash to image._hashes immediately) and
+// waits for ALL workers to send their 'done' message before resolving.
+//
+// onProgress receives a synthesized { done, total } snapshot in
+// arrival-order across workers (so the progress label advances smoothly
+// even though individual workers race each other).
 function runWorkerHash(items, onProgress) {
-  return new Promise((resolve, reject) => {
-    const worker = getWorker();
-    let received = 0;
-    const total = items.length;
+  const pool = getWorkerPool();
+  const total = items.length;
+  let globalDone = 0;
 
+  // Round-robin distribute. For unequal slice sizes (total not divisible
+  // by pool size), the first `total % size` workers get one extra item —
+  // standard balanced partitioning.
+  const buckets = Array.from({ length: pool.size }, () => []);
+  for (let i = 0; i < items.length; i++) {
+    buckets[i % pool.size].push(items[i]);
+  }
+
+  const runOne = (worker, batch) => new Promise((resolve, reject) => {
+    if (batch.length === 0) {
+      // Worker has no work; resolve immediately so the outer Promise.all
+      // doesn't hang.
+      resolve();
+      return;
+    }
     function onMessage(event) {
       const m = event && event.data;
       if (!m) return;
       if (m.type === 'progress') {
-        received++;
-        // Cache the hash on the image immediately.
+        globalDone++;
+        // Cache the hash on the image immediately. Don't fire update()
+        // for every per-item write — too noisy for subscribers; the
+        // outer findDuplicates() update() at the end is what triggers
+        // UI reaction.
         if (!m.error && m.id) {
           const img = getState().images[m.id];
           if (img) {
-            // Don't fire update() for every per-item cache write — too noisy
-            // for subscribers. We mutate the field directly; the final
-            // findDuplicates() update() at the end is what subscribers act on.
-            img._hashes = { sha256: m.sha256, dhash: m.dhash };
+            img._hashes = { sha256: m.sha256, dhash: m.dhash, phash: m.phash };
           }
         }
-        try { onProgress({ done: m.done || received, total }); } catch { /* ignore */ }
+        try { onProgress({ done: globalDone, total }); } catch { /* ignore */ }
         return;
       }
       if (m.type === 'done') {
@@ -349,7 +437,8 @@ function runWorkerHash(items, onProgress) {
     }
     worker.addEventListener('message', onMessage);
     worker.addEventListener('error', onError);
-
-    worker.postMessage({ type: 'hash', items });
+    worker.postMessage({ type: 'hash', items: batch });
   });
+
+  return Promise.all(pool.workers.map((w, i) => runOne(w, buckets[i])));
 }

@@ -1014,6 +1014,23 @@ function buildBatchPanel() {
   batchDetectTextBtn.addEventListener('click', () => onBatchDetectText(batchDetectTextBtn));
   redactSection.body.appendChild(batchDetectTextBtn);
 
+  // Cancel button — hidden by default, shown only while a batch detect is
+  // running. Click flips batchDetectAbort.value = true; the next iteration
+  // of the detect loop checks it via shouldAbort() and returns early.
+  const batchDetectCancelBtn = document.createElement('button');
+  batchDetectCancelBtn.type = 'button';
+  batchDetectCancelBtn.className = 'batch-apply batch-redact-cancel';
+  batchDetectCancelBtn.textContent = t('batchRedactCancel');
+  batchDetectCancelBtn.setAttribute('aria-label', t('batchRedactCancel'));
+  batchDetectCancelBtn.hidden = true;
+  batchDetectCancelBtn.addEventListener('click', () => {
+    batchDetectAbort.value = true;
+    // Visual cue: disable so the user doesn't double-click while we drain.
+    batchDetectCancelBtn.disabled = true;
+    batchDetectCancelBtn.textContent = t('batchRedactCancelling');
+  });
+  redactSection.body.appendChild(batchDetectCancelBtn);
+
   panel.appendChild(redactSection.section);
 
   // Stash refs for syncBatchRedactSection below.
@@ -1027,6 +1044,7 @@ function buildBatchPanel() {
     sensBtns: batchSensBtns,
     facesBtn: batchDetectFacesBtn,
     textBtn: batchDetectTextBtn,
+    cancelBtn: batchDetectCancelBtn,
   };
 
   // --- 6. Export ---------------------------------------------------------
@@ -1458,6 +1476,22 @@ function showRemoveUndoToast(snapshot) {
   setTimeout(dismiss, TOAST_MS);
 }
 
+// Show / hide the in-progress Cancel button. Pure DOM toggle — the
+// batch detect loops poll batchDetectAbort.value via shouldAbort() and
+// return early when it flips true.
+function showBatchCancel() {
+  if (!batchRedactEls || !batchRedactEls.cancelBtn) return;
+  batchRedactEls.cancelBtn.hidden = false;
+  batchRedactEls.cancelBtn.disabled = false;
+  batchRedactEls.cancelBtn.textContent = t('batchRedactCancel');
+}
+function hideBatchCancel() {
+  if (!batchRedactEls || !batchRedactEls.cancelBtn) return;
+  batchRedactEls.cancelBtn.hidden = true;
+  batchRedactEls.cancelBtn.disabled = false;
+  batchRedactEls.cancelBtn.textContent = t('batchRedactCancel');
+}
+
 // Sync the batch Redact section's controls from state.ui.redact +
 // state.ui.aiDetectSensitivity. Called from syncBatchPanel on every
 // state change so editor-side edits (mode/color/strength) reflect here
@@ -1511,6 +1545,7 @@ async function onBatchDetectFaces(btn) {
   const prevLabel = btn.textContent;
   btn.disabled = true;
   batchDetectAbort = { value: false };
+  showBatchCancel();
 
   // Buffer of { imageId, rects } to commit after the loop.
   const buffered = [];
@@ -1541,6 +1576,7 @@ async function onBatchDetectFaces(btn) {
   } finally {
     btn.disabled = false;
     btn.textContent = prevLabel;
+    hideBatchCancel();
   }
 
   // Commit all buffered rects as one history transaction.
@@ -1588,6 +1624,7 @@ async function onBatchDetectText(btn) {
   const prevLabel = btn.textContent;
   btn.disabled = true;
   batchDetectAbort = { value: false };
+  showBatchCancel();
 
   const buffered = [];
   let result;
@@ -1622,6 +1659,7 @@ async function onBatchDetectText(btn) {
   } finally {
     btn.disabled = false;
     btn.textContent = prevLabel;
+    hideBatchCancel();
   }
 
   if (buffered.length === 0) {

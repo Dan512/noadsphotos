@@ -21,7 +21,7 @@ import { undo, redo } from './history.js';
 import { cancelActiveToolInProgress } from './toolCancel.js';
 import { activatePanTemporarily, deactivatePanTemporarily } from './tools/panTool.js';
 import { getState } from './state.js';
-import { cancelFindMode } from './dedupe.js';
+import { cancelFindMode, hasUndoableRemove, undoLastRemove } from './dedupe.js';
 
 let installed = false;
 let detach = null;
@@ -78,7 +78,15 @@ export function initShortcuts() {
         // entered find-duplicates mode without yet clicking Remove,
         // Ctrl+Z exits that mode (restores queue order + clears marks)
         // BEFORE falling through to in-tool cancel or global undo.
-        if (getState().dedupe.active) {
+        // First priority: if dedupe has an undoable removal stashed,
+        // restore it. Pop the snapshot, restore images at their queue
+        // positions, re-enter find-mode. A second Ctrl+Z then falls to
+        // the cancelFindMode branch below and exits find-mode entirely.
+        if (hasUndoableRemove()) {
+          undoLastRemove();
+          e.preventDefault();
+          e.stopPropagation();
+        } else if (getState().dedupe.active) {
           cancelFindMode();
           e.preventDefault();
           e.stopPropagation();

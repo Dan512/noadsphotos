@@ -78,6 +78,7 @@ function handleStateChange() {
     // changed it), reflect that in the editor-side controls.
     syncModeBtns();
     syncSensitivityBtns();
+    syncOcrPreviewSection();
   }
 }
 
@@ -361,6 +362,37 @@ function renderPanel() {
   detectTextBtn.addEventListener('click', () => onDetectText(detectTextBtn));
   root.appendChild(detectTextBtn);
 
+  // OCR preview-mode controls. Hidden by default; revealed when state.ui.
+  // ocrPreview.active flips on (after "Detect text" populates the preview).
+  // Status line shows count + selected count. The three buttons commit /
+  // commit-all / cancel respectively.
+  const ocrPreviewSection = document.createElement('div');
+  ocrPreviewSection.className = 'redact-ocr-preview';
+  ocrPreviewSection.hidden = true;
+  const ocrPreviewStatus = document.createElement('p');
+  ocrPreviewStatus.className = 'redact-ocr-preview-status';
+  ocrPreviewStatus.setAttribute('aria-live', 'polite');
+  ocrPreviewSection.appendChild(ocrPreviewStatus);
+  const ocrApplySelectedBtn = document.createElement('button');
+  ocrApplySelectedBtn.type = 'button';
+  ocrApplySelectedBtn.className = 'redact-ocr-apply-selected btn-primary';
+  ocrApplySelectedBtn.textContent = t('ocrPreviewApplySelected');
+  ocrApplySelectedBtn.addEventListener('click', () => applyOcrSelected());
+  ocrPreviewSection.appendChild(ocrApplySelectedBtn);
+  const ocrApplyAllBtn = document.createElement('button');
+  ocrApplyAllBtn.type = 'button';
+  ocrApplyAllBtn.className = 'redact-ocr-apply-all';
+  ocrApplyAllBtn.textContent = t('ocrPreviewApplyAll');
+  ocrApplyAllBtn.addEventListener('click', () => applyOcrAll());
+  ocrPreviewSection.appendChild(ocrApplyAllBtn);
+  const ocrCancelBtn = document.createElement('button');
+  ocrCancelBtn.type = 'button';
+  ocrCancelBtn.className = 'redact-ocr-cancel';
+  ocrCancelBtn.textContent = t('ocrPreviewCancel');
+  ocrCancelBtn.addEventListener('click', () => cancelOcrPreview());
+  ocrPreviewSection.appendChild(ocrCancelBtn);
+  root.appendChild(ocrPreviewSection);
+
   // Apply button — "done editing this redact." Deselects so a subsequent
   // drag starts a fresh redact instead of editing the previous one.
   const actions = document.createElement('div');
@@ -386,10 +418,13 @@ function renderPanel() {
     modeBtns, strengthInput, strengthReadout, applyBtn,
     strengthRow, colorRow, colorInput,
     sensitivityBtns,
+    ocrPreviewSection, ocrPreviewStatus,
+    ocrApplySelectedBtn,
   };
   // Apply initial show/hide for the new color/strength rows.
   syncModeBtns();
   syncSensitivityBtns();
+  syncOcrPreviewSection();
 
   strengthInput.addEventListener('input', () => {
     const n = clampStrength(Number(strengthInput.value));
@@ -400,6 +435,22 @@ function renderPanel() {
   });
 
   syncModeBtns();
+}
+
+// Sync the OCR preview section's visibility + status label from
+// state.ui.ocrPreview. Hidden when inactive; shows count + selected
+// count when active. Also toggles the regular Apply/Detect buttons'
+// emphasis so it's obvious the user is in a different mode.
+function syncOcrPreviewSection() {
+  if (!panelEls || !panelEls.ocrPreviewSection) return;
+  const p = getState().ui.ocrPreview || { active: false, lines: [] };
+  panelEls.ocrPreviewSection.hidden = !p.active;
+  if (!p.active) return;
+  const total = p.lines.length;
+  const selected = p.lines.filter(l => l.selected).length;
+  panelEls.ocrPreviewStatus.textContent = t('ocrPreviewStatus', { selected, total });
+  // Disable the Apply Selected button when nothing's marked.
+  panelEls.ocrApplySelectedBtn.disabled = selected === 0;
 }
 
 // Sync the active state on the three sensitivity preset chips from
@@ -598,26 +649,99 @@ async function onDetectText(btn) {
     return;
   }
 
-  // Add one redact overlay per detected text line. Single history
-  // transaction → Ctrl+Z reverts the whole batch. Same passthrough rule
-  // as onDetectFaces: respect the user's current tool settings.
-  const mode = toolMode();
-  const color = toolColor();
-  const strength = toolStrength();
-  withOverlaysHistory(`Auto-redact ${rects.length} text line${rects.length === 1 ? '' : 's'}`, img.id, state => {
-    const target = state.images[img.id];
-    if (!target) return;
-    for (const r of rects) {
-      if (r.w < 4 || r.h < 4) continue; // skip degenerate detections
-      const overlay = newRedactOverlay(r.x, r.y, r.w, r.h, {
-        mode, color, strength,
-      });
-      addOverlay(target, overlay);
-    }
+  // v1.2.x: enter OCR preview-select mode instead of immediately
+  // committing. The renderer paints yellow boxes per detected line + red
+  // for any line whose recognized text matched a PII regex (autoFlag).
+  // The user reviews, toggles selection by clicking thumbnails, then
+  // clicks "Apply selected" / "Apply all" / "Cancel" from the redact
+  // tool's panel.
+  update(state => {
+    state.ui.ocrPreview.active = true;
+    state.ui.ocrPreview.imageId = img.id;
+    state.ui.ocrPreview.lines = rects.map(r => ({
+      rect: { x: r.x, y: r.y, w: r.w, h: r.h },
+      text: r.text || '',
+      selected: !!r.autoFlag,
+      autoFlag: !!r.autoFlag,
+    }));
+    // Deselect any overlay since the preview UI takes over the canvas.
     state.ui.selectedOverlayId = null;
   });
 
-  showToast(t('redactDetectTextSuccess', { count: rects.length }), { variant: 'info' });
+  const preselected = rects.filter(r => r.autoFlag).length;
+  showToast(t('ocrPreviewEntered', { total: rects.length, preselected }), { variant: 'info' });
+}
+
+// --- OCR preview-mode actions --------------------------------------------
+
+// Commit currently-selected lines as redact overlays. Single history
+// transaction → Ctrl+Z reverts the whole batch.
+function applyOcrSelected() {
+  const s = getState();
+  if (!s.ui.ocrPreview.active) return;
+  const imgId = s.ui.ocrPreview.imageId;
+  const target = imgId ? s.images[imgId] : null;
+  if (!target) {
+    cancelOcrPreview();
+    return;
+  }
+  const selectedLines = s.ui.ocrPreview.lines.filter(l => l.selected);
+  if (selectedLines.length === 0) {
+    showToast(t('ocrPreviewNoneSelected'), { variant: 'warn' });
+    return;
+  }
+  const mode = toolMode();
+  const color = toolColor();
+  const strength = toolStrength();
+  withOverlaysHistory(
+    `Auto-redact ${selectedLines.length} text line${selectedLines.length === 1 ? '' : 's'}`,
+    imgId,
+    state => {
+      const img2 = state.images[imgId];
+      if (!img2) return;
+      for (const line of selectedLines) {
+        const r = line.rect;
+        if (!r || r.w < 4 || r.h < 4) continue;
+        addOverlay(img2, newRedactOverlay(r.x, r.y, r.w, r.h, { mode, color, strength }));
+      }
+      state.ui.selectedOverlayId = null;
+    },
+  );
+  // Exit preview mode after commit.
+  update(state => {
+    state.ui.ocrPreview.active  = false;
+    state.ui.ocrPreview.imageId = null;
+    state.ui.ocrPreview.lines   = [];
+  });
+  showToast(t('redactDetectTextSuccess', { count: selectedLines.length }), { variant: 'info' });
+}
+
+// Select all lines, then apply.
+function applyOcrAll() {
+  update(state => {
+    if (!state.ui.ocrPreview.active) return;
+    for (const l of state.ui.ocrPreview.lines) l.selected = true;
+  });
+  applyOcrSelected();
+}
+
+// Discard preview without committing.
+function cancelOcrPreview() {
+  update(state => {
+    state.ui.ocrPreview.active  = false;
+    state.ui.ocrPreview.imageId = null;
+    state.ui.ocrPreview.lines   = [];
+  });
+}
+
+// Toggle a single line's selected state. Called from the renderer's
+// pointer handler when the user clicks within a preview rect.
+function toggleOcrLine(index) {
+  update(state => {
+    const lines = state.ui.ocrPreview.lines;
+    if (index < 0 || index >= lines.length) return;
+    lines[index].selected = !lines[index].selected;
+  });
 }
 
 // Test-only reset for browser specs.

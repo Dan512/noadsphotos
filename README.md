@@ -51,6 +51,19 @@ That's:
   consent modal.
 - The [JSZip](https://stuk.github.io/jszip/) library (~97&nbsp;KB, MIT) at
   `js/vendor/jszip.min.js` for batch ZIP export.
+- The [MediaPipe BlazeFace](https://github.com/google/mediapipe) face-detection
+  ONNX export (~600&nbsp;KB, Apache-2.0) under `js/vendor/blazeface/`,
+  re-distributed by [Qualcomm AI Hub Models](https://huggingface.co/qualcomm/MediaPipe-Face-Detection).
+  Powers the "Auto-detect faces" button in the redact tool. Tile-based
+  multi-scale scanning catches small faces in group photos.
+- The [Tesseract.js v7](https://github.com/naptha/tesseract.js) OCR engine
+  (~22&nbsp;MB across 6 LSTM-only WASM variants + English `eng.traineddata.gz`,
+  all Apache-2.0) under `js/vendor/tesseract/`. Powers the "Detect text"
+  button + preview-select mode with PII regex auto-marking.
+- The ONNX Runtime Web threaded JSEP WASM kernels
+  (~36&nbsp;MB across `ort-wasm-simd-threaded.{jsep,}.{wasm,mjs}`)
+  also vendored under `js/vendor/onnxruntime-web/` — required by both
+  BlazeFace and the existing background-removal model at runtime.
 
 A clone of this repo is consequently larger and slower than a typical
 static-site repo. The trade is intentional: zero third-party CDN reliance,
@@ -67,7 +80,10 @@ inventory + re-vendoring instructions.
 - **Vendored libraries** under `js/vendor/`:
   [`bgremove/`](js/vendor/bgremove/) (@imgly/background-removal + ISNET
   model + ONNX runtime WASM),
-  [`onnxruntime-web/`](js/vendor/onnxruntime-web/) (peer ESM bundle),
+  [`onnxruntime-web/`](js/vendor/onnxruntime-web/) (peer ESM bundle + the
+  threaded JSEP WASM kernels shared by BlazeFace + bg-remove),
+  [`blazeface/`](js/vendor/blazeface/) (face detection ONNX, ~600 KB),
+  [`tesseract/`](js/vendor/tesseract/) (OCR engine + English language data, ~22 MB),
   [`jspdf/`](js/vendor/jspdf/) (PDF export),
   [`heic/`](js/vendor/heic/) (HEIC decoder),
   [`jszip.min.js`](js/vendor/jszip.min.js) (ZIP batch export).
@@ -96,5 +112,14 @@ Requires Node 22+.
 - `npm run serve` — local static dev server on `http://localhost:4173`
 - `node scripts/build-icons.mjs` — re-render `img/icon-*.png` from
   `img/logo.svg` (committed to the repo; only re-run if the logo changes)
+- `node scripts/install-blazeface.mjs` — re-fetch the BlazeFace face-detect
+  ONNX from Qualcomm AI Hub's S3 release bucket (already committed; only
+  re-run after bumping `QAI_VERSION`)
+- `node scripts/install-tesseract.mjs` — re-fetch Tesseract.js v7 +
+  tesseract.js-core v7 + English `eng.traineddata` (already committed;
+  only re-run after bumping the pinned versions)
+- `node scripts/install-ort.mjs` — re-fetch the ONNX Runtime Web threaded
+  JSEP WASM kernels (already committed; only re-run after bumping
+  `ORT_VERSION`)
 - `node scripts/measure-weight.mjs` — print the initial-load wire byte
   count (raw + gzipped) for the static page

@@ -112,12 +112,6 @@ export async function ensureTextConsent() {
  * @param {{ progress?: (msg: object) => void, sensitivity?: 'strict' | 'normal' | 'loose' }} [opts]
  * @returns {Promise<Array<{x: number, y: number, w: number, h: number, text: string, confidence: number}>>}
  */
-// Temporary debug switch — set TEXT_DETECT_DEBUG=true to surface the
-// Tesseract.js result shape in the browser console. Helpful when "no
-// text found" doesn't match reality. Leave on while diagnosing; flip
-// back to false once confidence in the pipeline is restored.
-const TEXT_DETECT_DEBUG = true;
-
 export async function detectText(bitmap, opts = {}) {
   if (!bitmap || !bitmap.width || !bitmap.height) return [];
   const granted = await ensureTextConsent();
@@ -134,86 +128,10 @@ export async function detectText(bitmap, opts = {}) {
   // `blocks` (structured JSON) so we can walk down to line bboxes. The
   // third argument is the output-options object.
   const canvas = bitmapToCanvas(bitmap);
-
-  if (TEXT_DETECT_DEBUG) {
-    /* eslint-disable no-console */
-    console.group('[textDetect] running');
-    console.log('bitmap dims:', bitmap.width, '×', bitmap.height);
-    console.log('canvas dims:', canvas.width, '×', canvas.height);
-    console.log('sensitivity:', opts.sensitivity || 'normal');
-    console.log('Tesseract global:', typeof self !== 'undefined' && self.Tesseract ? 'present' : typeof window !== 'undefined' && window.Tesseract ? 'present' : 'MISSING');
-    /* eslint-enable no-console */
-  }
-
-  let result;
-  try {
-    result = await worker.recognize(canvas, {}, { blocks: true, text: true });
-  } catch (err) {
-    if (TEXT_DETECT_DEBUG) {
-      console.error('[textDetect] worker.recognize threw:', err);
-      console.groupEnd();
-    }
-    throw err;
-  }
-
-  if (TEXT_DETECT_DEBUG) {
-    /* eslint-disable no-console */
-    const data = result && result.data;
-    console.log('result.data keys:', data ? Object.keys(data) : '(no data)');
-    if (data) {
-      console.log('data.text (first 200 chars):', (data.text || '').slice(0, 200));
-      console.log('data.text length:', (data.text || '').length);
-      console.log('data.confidence:', data.confidence);
-      console.log('data.blocks: count =', Array.isArray(data.blocks) ? data.blocks.length : 'NOT AN ARRAY');
-      console.log('data.lines: count =', Array.isArray(data.lines) ? data.lines.length : 'NOT AN ARRAY');
-      // Peek at the FIRST line/block structure so we can see what bbox + confidence look like.
-      if (Array.isArray(data.blocks) && data.blocks.length > 0) {
-        const b0 = data.blocks[0];
-        console.log('blocks[0] keys:', Object.keys(b0 || {}));
-        if (b0 && Array.isArray(b0.paragraphs) && b0.paragraphs.length > 0) {
-          const p0 = b0.paragraphs[0];
-          console.log('blocks[0].paragraphs[0] keys:', Object.keys(p0 || {}));
-          if (p0 && Array.isArray(p0.lines) && p0.lines.length > 0) {
-            console.log('blocks[0].paragraphs[0].lines[0]:', p0.lines[0]);
-          }
-        }
-      }
-      if (Array.isArray(data.lines) && data.lines.length > 0) {
-        console.log('data.lines[0]:', data.lines[0]);
-      }
-    }
-    /* eslint-enable no-console */
-  }
-
+  const result = await worker.recognize(canvas, {}, { blocks: true, text: true });
   const lines = extractLines(result && result.data);
   const threshold = confidenceForSensitivity(opts.sensitivity);
-
-  if (TEXT_DETECT_DEBUG) {
-    /* eslint-disable no-console */
-    console.log('extractLines() returned:', lines.length, 'line(s)');
-    if (lines.length > 0) {
-      const sample = lines[0];
-      console.log('first line shape — keys:', Object.keys(sample || {}));
-      console.log('first line — bbox:', sample && sample.bbox, 'confidence:', sample && sample.confidence, 'text:', (sample && sample.text || '').slice(0, 80));
-    }
-    console.log('confidence threshold:', threshold);
-    /* eslint-enable no-console */
-  }
-
-  const out = postProcess(lines, threshold);
-
-  if (TEXT_DETECT_DEBUG) {
-    /* eslint-disable no-console */
-    console.log('postProcess() kept:', out.length, '/', lines.length, 'line(s) above threshold');
-    if (out.length === 0 && lines.length > 0) {
-      console.warn('[textDetect] ALL lines were filtered out — likely either confidence-too-low or bbox shape mismatch');
-      console.log('Sample raw line for shape inspection:', lines[0]);
-    }
-    console.groupEnd();
-    /* eslint-enable no-console */
-  }
-
-  return out;
+  return postProcess(lines, threshold);
 }
 
 // Walk Tesseract.js's recognized blocks → paragraphs → lines tree and
@@ -399,6 +317,31 @@ function bitmapToCanvas(bitmap) {
 
 // --- Post-process ---------------------------------------------------------
 
+// PII regex patterns — when ANY of these matches a recognized line's
+// text, the line is flagged for auto-selection in the preview UI. Tuned
+// to be conservative (false-positive avoidance) — better to miss a
+// pattern than to mark unrelated lines.
+const PII_PATTERNS = [
+  // Email (RFC-light; covers common forms)
+  /\b[\w.+-]+@[\w-]+\.[\w.-]+\b/,
+  // US phone: 555-555-5555 / 555.555.5555 / 555 555 5555 / (555) 555-5555
+  /\b(?:\(\d{3}\)\s*|\d{3}[-.\s])\d{3}[-.\s]?\d{4}\b/,
+  // Credit card-ish: 4 groups of 4 digits with optional separators
+  /\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b/,
+  // SSN (US): xxx-xx-xxxx
+  /\b\d{3}-\d{2}-\d{4}\b/,
+  // IPv4
+  /\b(?:\d{1,3}\.){3}\d{1,3}\b/,
+];
+
+function lineMatchesPII(text) {
+  if (!text || typeof text !== 'string') return false;
+  for (const re of PII_PATTERNS) {
+    if (re.test(text)) return true;
+  }
+  return false;
+}
+
 function postProcess(lines, threshold) {
   if (!Array.isArray(lines)) return [];
   const minConfidence = Number.isFinite(threshold) ? threshold : CONFIDENCE_THRESHOLD;
@@ -414,10 +357,15 @@ function postProcess(lines, threshold) {
     const h = Math.abs(y1 - y0);
     if (w <= 0 || h <= 0) continue;
     if (w * h < MIN_AREA_PX) continue;
+    const text = typeof line.text === 'string' ? line.text.trim() : '';
     out.push({
       x, y, w, h,
-      text: typeof line.text === 'string' ? line.text.trim() : '',
+      text,
       confidence,
+      // Set if the recognized text matches any PII regex. Preview-select
+      // mode pre-marks these lines for redaction so the user can accept-
+      // all in one click for the common case.
+      autoFlag: lineMatchesPII(text),
     });
   }
   // Reading-order sort: top-to-bottom, then left-to-right within a row.
