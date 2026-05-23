@@ -688,6 +688,7 @@ export function initPreviewRenderer(lifecycle, caps) {
       applyRedactFx(baseCtx, {
         x: rect.x, y: rect.y, w: rect.w, h: rect.h,
         mode: o.mode, strength: scaledStrength,
+        color: o.color, // bug fix: was being dropped, so every mask rendered black
       }, caps);
     }
   }

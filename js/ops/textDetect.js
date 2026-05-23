@@ -122,10 +122,37 @@ export async function detectText(bitmap, opts = {}) {
   // directly in the supported set, so we wrap it in a canvas first. This
   // also lets us pass a stable source even if the caller's bitmap gets
   // closed/decoded later.
+  //
+  // Tesseract.js v7 changed the recognize() default: only `data.text` is
+  // populated unless we explicitly opt into other output formats. We need
+  // `blocks` (structured JSON) so we can walk down to line bboxes. The
+  // third argument is the output-options object.
   const canvas = bitmapToCanvas(bitmap);
-  const result = await worker.recognize(canvas);
+  const result = await worker.recognize(canvas, {}, { blocks: true, text: true });
   const threshold = confidenceForSensitivity(opts.sensitivity);
-  return postProcess(result && result.data ? result.data.lines : [], threshold);
+  return postProcess(extractLines(result && result.data), threshold);
+}
+
+// Walk Tesseract.js's recognized blocks → paragraphs → lines tree and
+// return a flat list of line records. Defensive against both the v7
+// shape (lines nested under blocks/paragraphs) AND the legacy v6 shape
+// (lines on data directly) so a future Tesseract.js upgrade can change
+// shape under us without breaking detection.
+function extractLines(data) {
+  if (!data) return [];
+  if (Array.isArray(data.lines) && data.lines.length > 0) return data.lines;
+  const out = [];
+  const blocks = Array.isArray(data.blocks) ? data.blocks : [];
+  for (const block of blocks) {
+    const paragraphs = Array.isArray(block && block.paragraphs) ? block.paragraphs : [];
+    for (const para of paragraphs) {
+      const lines = Array.isArray(para && para.lines) ? para.lines : [];
+      for (const line of lines) {
+        if (line) out.push(line);
+      }
+    }
+  }
+  return out;
 }
 
 /**

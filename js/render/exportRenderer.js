@@ -401,6 +401,7 @@ function applyRedactsToCanvas(ctx, imageState, outDims, caps) {
       x, y, w, h,
       mode: o.mode,
       strength: o.strength,
+      color: o.color, // bug fix: was being dropped, so every mask exported black
     }, caps);
   }
 }

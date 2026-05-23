@@ -1561,6 +1561,10 @@ async function onBatchDetectFaces(btn) {
       }
     }
   });
+  // Regenerate thumbnails for every touched image so the new redacts show
+  // up in the queue grid. Existing batch ops (resize, adjust, etc.) do
+  // the same dance.
+  maybeRefreshThumbs(affectedIds);
 
   const totalFaces = result ? result.totalFaces : 0;
   if (result && result.aborted) {
@@ -1637,6 +1641,7 @@ async function onBatchDetectText(btn) {
       }
     }
   });
+  maybeRefreshThumbs(affectedIds);
 
   const totalLines = result ? result.totalLines : 0;
   if (result && result.aborted) {

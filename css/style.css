@@ -1815,6 +1815,10 @@ main#workspace:has(> #editor-view:not([hidden])) {
   align-items: center;
   font-size: var(--t-sm);
 }
+/* The UA stylesheet's `[hidden] { display: none }` is overridden by the
+   `display: grid` declaration above due to specificity. Restore the
+   expected hide behavior explicitly so JS can do `el.hidden = true`. */
+.batch-row[hidden] { display: none; }
 .batch-row > span:first-child { color: var(--text-secondary); }
 .batch-row--tol {
   grid-template-columns: 80px 1fr 4ch;
