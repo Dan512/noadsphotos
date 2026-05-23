@@ -43,6 +43,17 @@ let sessionPromise = null;                  // Promise<{ run, decode }>
 let testSessionForTest = null;              // injected by _setSessionForTest
 
 const MODEL_URL = '/js/vendor/blazeface/face_detector.onnx';
+// The .onnx references its weight tensor data via the standard ONNX
+// external-data mechanism (a side file living in the same directory).
+// When we hand ORT a URL for the .onnx, it does NOT auto-fetch the
+// companion .data file — that produces:
+//   "Failed to load external data file 'face_detector.data',
+//    error: Module.MountedFiles is not available."
+// Fix: pre-fetch both files as bytes and pass the .data explicitly via
+// the SessionOptions.externalData option. The path string MUST match
+// what's stored inside the .onnx (basename, no leading slash).
+const MODEL_DATA_URL  = '/js/vendor/blazeface/face_detector.data';
+const MODEL_DATA_NAME = 'face_detector.data';
 // We vendor TWO ORT bundles (see index.html import map):
 //   - 'onnxruntime-web'        → CPU bundle, WASM embedded, no external fetch.
 //   - 'onnxruntime-web/webgpu' → WebGPU bundle, also self-contained.
@@ -175,23 +186,51 @@ async function loadSession() {
       throw new Error('face_ort_load_failed: ' + (err && err.message ? err.message : err));
     }
 
+    // Pre-fetch both the .onnx and its companion .data file as bytes.
+    // Doing this here (instead of letting ORT's URL loader try) lets us
+    // pass the external-data buffer explicitly via the externalData
+    // option, which is the only way ORT-Web supports external weights.
+    let modelBytes, dataBytes;
+    try {
+      const [modelRes, dataRes] = await Promise.all([
+        fetch(MODEL_URL),
+        fetch(MODEL_DATA_URL),
+      ]);
+      if (!modelRes.ok) throw new Error(`model fetch ${modelRes.status}`);
+      if (!dataRes.ok)  throw new Error(`weights fetch ${dataRes.status}`);
+      [modelBytes, dataBytes] = await Promise.all([
+        modelRes.arrayBuffer(),
+        dataRes.arrayBuffer(),
+      ]);
+    } catch (err) {
+      sessionPromise = null;
+      throw new Error('face_model_fetch_failed: ' + (err && err.message ? err.message : err));
+    }
+
+    const sessionOptions = {
+      executionProviders: providers,
+      graphOptimizationLevel: 'all',
+      externalData: [
+        { data: new Uint8Array(dataBytes), path: MODEL_DATA_NAME },
+      ],
+    };
+
     let inferenceSession;
     try {
-      inferenceSession = await ort.InferenceSession.create(MODEL_URL, {
-        executionProviders: providers,
-        graphOptimizationLevel: 'all',
-      });
+      inferenceSession = await ort.InferenceSession.create(new Uint8Array(modelBytes), sessionOptions);
     } catch (err) {
       // If we requested WebGPU and it failed (e.g. adapter disappeared
       // post-probe), we CAN'T just retry against the same module — once
       // ORT's WASM init is broken there's no recovery. Re-import the CPU
-      // bundle fresh and try again.
+      // bundle fresh and try again with the bytes we already fetched.
       if (useGpu) {
         try {
           const cpuOrt = await import(/* @vite-ignore */ ORT_CPU_SPECIFIER);
-          inferenceSession = await cpuOrt.InferenceSession.create(MODEL_URL, {
+          inferenceSession = await cpuOrt.InferenceSession.create(new Uint8Array(modelBytes), {
+            ...sessionOptions,
             executionProviders: ['cpu'],
-            graphOptimizationLevel: 'all',
+            // externalData buffers were consumed by the first try; rebuild a fresh view.
+            externalData: [{ data: new Uint8Array(dataBytes), path: MODEL_DATA_NAME }],
           });
           ort = cpuOrt;
         } catch (cpuErr) {
