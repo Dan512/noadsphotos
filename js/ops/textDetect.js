@@ -112,6 +112,12 @@ export async function ensureTextConsent() {
  * @param {{ progress?: (msg: object) => void, sensitivity?: 'strict' | 'normal' | 'loose' }} [opts]
  * @returns {Promise<Array<{x: number, y: number, w: number, h: number, text: string, confidence: number}>>}
  */
+// Temporary debug switch — set TEXT_DETECT_DEBUG=true to surface the
+// Tesseract.js result shape in the browser console. Helpful when "no
+// text found" doesn't match reality. Leave on while diagnosing; flip
+// back to false once confidence in the pipeline is restored.
+const TEXT_DETECT_DEBUG = true;
+
 export async function detectText(bitmap, opts = {}) {
   if (!bitmap || !bitmap.width || !bitmap.height) return [];
   const granted = await ensureTextConsent();
@@ -128,9 +134,86 @@ export async function detectText(bitmap, opts = {}) {
   // `blocks` (structured JSON) so we can walk down to line bboxes. The
   // third argument is the output-options object.
   const canvas = bitmapToCanvas(bitmap);
-  const result = await worker.recognize(canvas, {}, { blocks: true, text: true });
+
+  if (TEXT_DETECT_DEBUG) {
+    /* eslint-disable no-console */
+    console.group('[textDetect] running');
+    console.log('bitmap dims:', bitmap.width, '×', bitmap.height);
+    console.log('canvas dims:', canvas.width, '×', canvas.height);
+    console.log('sensitivity:', opts.sensitivity || 'normal');
+    console.log('Tesseract global:', typeof self !== 'undefined' && self.Tesseract ? 'present' : typeof window !== 'undefined' && window.Tesseract ? 'present' : 'MISSING');
+    /* eslint-enable no-console */
+  }
+
+  let result;
+  try {
+    result = await worker.recognize(canvas, {}, { blocks: true, text: true });
+  } catch (err) {
+    if (TEXT_DETECT_DEBUG) {
+      console.error('[textDetect] worker.recognize threw:', err);
+      console.groupEnd();
+    }
+    throw err;
+  }
+
+  if (TEXT_DETECT_DEBUG) {
+    /* eslint-disable no-console */
+    const data = result && result.data;
+    console.log('result.data keys:', data ? Object.keys(data) : '(no data)');
+    if (data) {
+      console.log('data.text (first 200 chars):', (data.text || '').slice(0, 200));
+      console.log('data.text length:', (data.text || '').length);
+      console.log('data.confidence:', data.confidence);
+      console.log('data.blocks: count =', Array.isArray(data.blocks) ? data.blocks.length : 'NOT AN ARRAY');
+      console.log('data.lines: count =', Array.isArray(data.lines) ? data.lines.length : 'NOT AN ARRAY');
+      // Peek at the FIRST line/block structure so we can see what bbox + confidence look like.
+      if (Array.isArray(data.blocks) && data.blocks.length > 0) {
+        const b0 = data.blocks[0];
+        console.log('blocks[0] keys:', Object.keys(b0 || {}));
+        if (b0 && Array.isArray(b0.paragraphs) && b0.paragraphs.length > 0) {
+          const p0 = b0.paragraphs[0];
+          console.log('blocks[0].paragraphs[0] keys:', Object.keys(p0 || {}));
+          if (p0 && Array.isArray(p0.lines) && p0.lines.length > 0) {
+            console.log('blocks[0].paragraphs[0].lines[0]:', p0.lines[0]);
+          }
+        }
+      }
+      if (Array.isArray(data.lines) && data.lines.length > 0) {
+        console.log('data.lines[0]:', data.lines[0]);
+      }
+    }
+    /* eslint-enable no-console */
+  }
+
+  const lines = extractLines(result && result.data);
   const threshold = confidenceForSensitivity(opts.sensitivity);
-  return postProcess(extractLines(result && result.data), threshold);
+
+  if (TEXT_DETECT_DEBUG) {
+    /* eslint-disable no-console */
+    console.log('extractLines() returned:', lines.length, 'line(s)');
+    if (lines.length > 0) {
+      const sample = lines[0];
+      console.log('first line shape — keys:', Object.keys(sample || {}));
+      console.log('first line — bbox:', sample && sample.bbox, 'confidence:', sample && sample.confidence, 'text:', (sample && sample.text || '').slice(0, 80));
+    }
+    console.log('confidence threshold:', threshold);
+    /* eslint-enable no-console */
+  }
+
+  const out = postProcess(lines, threshold);
+
+  if (TEXT_DETECT_DEBUG) {
+    /* eslint-disable no-console */
+    console.log('postProcess() kept:', out.length, '/', lines.length, 'line(s) above threshold');
+    if (out.length === 0 && lines.length > 0) {
+      console.warn('[textDetect] ALL lines were filtered out — likely either confidence-too-low or bbox shape mismatch');
+      console.log('Sample raw line for shape inspection:', lines[0]);
+    }
+    console.groupEnd();
+    /* eslint-enable no-console */
+  }
+
+  return out;
 }
 
 // Walk Tesseract.js's recognized blocks → paragraphs → lines tree and
