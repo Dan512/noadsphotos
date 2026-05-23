@@ -68,8 +68,21 @@ const ORT_CPU_SPECIFIER    = 'onnxruntime-web';
 const ORT_WEBGPU_SPECIFIER = 'onnxruntime-web/webgpu';
 
 const INPUT_SIZE = 256;
-const IOU_THRESHOLD   = 0.3;
+const IOU_THRESHOLD   = 0.3;   // intra-scan NMS — dedupe BlazeFace's per-face multi-box emissions
 const MAX_DETECTIONS  = 50;
+
+// Tile-based multi-scale scanning. For large source images, BlazeFace's
+// 256×256 letterbox downsamples small/distant faces below its trained
+// range (≈40 px). Running the model on overlapping sub-tiles in addition
+// to the global scan catches those faces. Results are merged in source-
+// pixel space via a final NMS pass at TILE_MERGE_IOU.
+//
+// Cost: 1 + N tile passes per image. We use a 2×2 tile grid with 25%
+// overlap so each tile is roughly (long edge / 1.6) wide — total 5
+// inference passes. Skipped entirely for images with long edge ≤ TILE_TRIGGER_PX.
+const TILE_TRIGGER_PX = 1024;
+const TILE_OVERLAP    = 0.25;  // 25% padding into neighbor cells
+const TILE_MERGE_IOU  = 0.5;   // more permissive than per-scan NMS so adjacent faces both survive
 
 // Sigmoid-space score thresholds for the three sensitivity presets exposed
 // to the UI. Lower = more detections (including some false positives);
@@ -172,13 +185,118 @@ export async function detectFaces(bitmap, opts = {}) {
   if (!granted) throw new Error('face_consent_declined');
 
   const session = await loadSession();
-  const { tensor, scale, dx, dy } = preprocess(bitmap);
-
-  const outputs = await session.run(tensor);
   const threshold = thresholdForSensitivity(opts.sensitivity);
-  const detections = decode(outputs, threshold);
-  const merged = nms(detections, IOU_THRESHOLD).slice(0, MAX_DETECTIONS);
-  return merged.map(d => unLetterbox(d, bitmap.width, bitmap.height, scale, dx, dy));
+
+  // 1. Global scan: the whole image letterboxed into 256×256. Catches
+  //    larger faces near image-center.
+  const globalRects = await scanRegion(session, bitmap, null, threshold);
+
+  // 2. Tile scan: split into a 2×2 overlapping grid when the image is
+  //    big enough that the global downsample destroys small faces.
+  //    Skipped for small images (the global scan is already optimal).
+  const tiles = generateTiles(bitmap.width, bitmap.height);
+  const tileRects = [];
+  for (const tile of tiles) {
+    const rects = await scanRegion(session, bitmap, tile, threshold);
+    for (const r of rects) tileRects.push(r);
+  }
+
+  // 3. Merge global + tile results. They're all already in source-pixel
+  //    space (each scanRegion call returned source-space rects), so we
+  //    NMS at a permissive IoU — same face appearing in multiple scans
+  //    has very high overlap (~0.9+) and dedupes cleanly; adjacent
+  //    faces with natural 30-40% overlap both survive.
+  const all = globalRects.concat(tileRects);
+  const merged = nmsSourceSpace(all, TILE_MERGE_IOU).slice(0, MAX_DETECTIONS);
+  return merged;
+}
+
+// Run one full detect pass on either the whole bitmap (region === null)
+// or a sub-region. Returns rects in SOURCE-PIXEL coordinates regardless.
+async function scanRegion(session, bitmap, region, scoreThreshold) {
+  const W = region ? region.w : bitmap.width;
+  const H = region ? region.h : bitmap.height;
+  const offsetX = region ? region.x : 0;
+  const offsetY = region ? region.y : 0;
+  const { tensor, scale, dx, dy } = preprocess(bitmap, region);
+  const outputs = await session.run(tensor);
+  const detections = decode(outputs, scoreThreshold);
+  const localRects = nms(detections, IOU_THRESHOLD)
+    .slice(0, MAX_DETECTIONS)
+    .map(d => unLetterbox(d, W, H, scale, dx, dy));
+  // Translate from region-local pixel coords back to source-pixel coords.
+  return localRects.map(r => ({
+    x: r.x + offsetX,
+    y: r.y + offsetY,
+    w: r.w,
+    h: r.h,
+    score: r.score,
+  }));
+}
+
+// Build a 2×2 tile grid with 25% overlap covering the source bitmap.
+// Returns [] for small images (no tiling needed). Tiles overlap their
+// neighbors by TILE_OVERLAP of cell size so faces straddling the seam
+// get caught in at least one tile.
+function generateTiles(srcW, srcH) {
+  if (Math.max(srcW, srcH) <= TILE_TRIGGER_PX) return [];
+
+  // 2×2 grid: each "cell" is half the image; each tile extends the
+  // cell into its neighbors by TILE_OVERLAP × cellSize on each inner edge.
+  const halfW = Math.ceil(srcW / 2);
+  const halfH = Math.ceil(srcH / 2);
+  const padX  = Math.round(halfW * TILE_OVERLAP);
+  const padY  = Math.round(halfH * TILE_OVERLAP);
+
+  const left   = 0;
+  const right  = Math.max(0, halfW - padX);
+  const top    = 0;
+  const bottom = Math.max(0, halfH - padY);
+  const topInnerH    = Math.min(srcH, halfH + padY);
+  const leftInnerW   = Math.min(srcW, halfW + padX);
+  const rightTileW   = srcW - right;
+  const bottomTileH  = srcH - bottom;
+
+  return [
+    // Top-left
+    { x: left,  y: top,    w: leftInnerW, h: topInnerH },
+    // Top-right
+    { x: right, y: top,    w: rightTileW, h: topInnerH },
+    // Bottom-left
+    { x: left,  y: bottom, w: leftInnerW, h: bottomTileH },
+    // Bottom-right
+    { x: right, y: bottom, w: rightTileW, h: bottomTileH },
+  ];
+}
+
+// NMS over source-space rects ({x, y, w, h, score}). Separate from the
+// nms() used inside scanRegion (which works on x_min/x_max-style
+// detections) because shape differs.
+function nmsSourceSpace(rects, iouThreshold) {
+  const arr = rects.slice().sort((a, b) => b.score - a.score);
+  const kept = [];
+  for (const r of arr) {
+    let overlap = false;
+    for (const k of kept) {
+      if (iouRectXYWH(r, k) > iouThreshold) { overlap = true; break; }
+    }
+    if (!overlap) kept.push(r);
+  }
+  return kept;
+}
+
+function iouRectXYWH(a, b) {
+  const aL = a.x, aR = a.x + a.w, aT = a.y, aB = a.y + a.h;
+  const bL = b.x, bR = b.x + b.w, bT = b.y, bB = b.y + b.h;
+  const xMin = Math.max(aL, bL);
+  const yMin = Math.max(aT, bT);
+  const xMax = Math.min(aR, bR);
+  const yMax = Math.min(aB, bB);
+  if (xMax <= xMin || yMax <= yMin) return 0;
+  const inter = (xMax - xMin) * (yMax - yMin);
+  const aArea = a.w * a.h;
+  const bArea = b.w * b.h;
+  return inter / (aArea + bArea - inter);
 }
 
 /**
@@ -341,13 +459,21 @@ async function loadSession() {
 
 // --- Preprocess -----------------------------------------------------------
 //
-// Letterbox the source bitmap into 256×256 with black padding so the
-// aspect ratio is preserved (a stretched landscape photo squashes faces
-// vertically and drops detection scores). Pixels normalized to [0, 1] and
-// packed CHW (matches the model's NCHW input layout).
-function preprocess(bitmap) {
-  const W = bitmap.width;
-  const H = bitmap.height;
+// Letterbox the source bitmap (or a sub-region of it) into 256×256 with
+// black padding so the aspect ratio is preserved (a stretched landscape
+// photo squashes faces vertically and drops detection scores). Pixels
+// normalized to [0, 1] and packed CHW (matches the model's NCHW input
+// layout).
+//
+// `region` is optional — when supplied, only that source-pixel rectangle
+// is letterboxed (used by tile-based scanning). The returned `scale`,
+// `dx`, `dy` are relative to the region, NOT the whole bitmap; callers
+// add the region offset back when mapping rects to source space.
+function preprocess(bitmap, region) {
+  const srcX = region ? region.x : 0;
+  const srcY = region ? region.y : 0;
+  const W = region ? region.w : bitmap.width;
+  const H = region ? region.h : bitmap.height;
   const scale = Math.min(INPUT_SIZE / W, INPUT_SIZE / H);
   const sw = Math.round(W * scale);
   const sh = Math.round(H * scale);
@@ -361,7 +487,9 @@ function preprocess(bitmap) {
   ctx.fillRect(0, 0, INPUT_SIZE, INPUT_SIZE);
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(bitmap, dx, dy, sw, sh);
+  // 9-arg drawImage handles both the full-bitmap path (srcX=srcY=0,
+  // W=bitmap.width) and the tile-region path identically.
+  ctx.drawImage(bitmap, srcX, srcY, W, H, dx, dy, sw, sh);
   const imageData = ctx.getImageData(0, 0, INPUT_SIZE, INPUT_SIZE);
   const pixels = imageData.data;
   const plane = INPUT_SIZE * INPUT_SIZE;
