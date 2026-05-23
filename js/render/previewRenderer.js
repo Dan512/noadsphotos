@@ -12,7 +12,7 @@
 //   - drawOverlays: just clears overlay canvas (nothing to draw yet).
 //   - Async bitmap retry: if ensureBitmap hasn't resolved, mark baseDirty so
 //     the next frame retries after the decode commits.
-import { getState, subscribe } from './../state.js';
+import { getState, subscribe, update } from './../state.js';
 import { markClean } from './renderCache.js';
 import { cssFilterString } from '../ops/adjust.js';
 import { drawText } from '../ops/text.js';
@@ -363,31 +363,27 @@ export function initPreviewRenderer(lifecycle, caps) {
     return Math.min(fw / imgW, fh / imgH, 1);
   }
 
-  // Given an image, return its OUTPUT dims after applying crop (if any) and
-  // 90°-multiple rotation. Used by sizeCanvases so the visible canvas
-  // accommodates the rotated/cropped image. Non-90 rotations are passed
-  // through as their bounding-box dims (matches geometry.rotateRect).
+  // Given an image, return its OUTPUT dims after applying crop + 90°-rotate
+  // + resize. Used by sizeCanvases so the visible canvas matches the target
+  // shape, including aspect-changing resize (e.g. "exact 200×400" from a
+  // square source).
   //
-  // Intentionally IGNORES transforms.resize — resize is shown to the user as
-  // pixelation via a downsample pre-pass in drawBase (see getResizedSource).
-  // The canvas itself stays at crop/rotate dimensions; only the bitmap data
-  // it draws is degraded to the resize output's pixel budget.
+  // For aspect-preserving resize (longestSide / percent / width / height /
+  // etc.), the canvas shrinks proportionally — the bitmap fills it cleanly
+  // and the pixelation pre-pass in `applyResizePixelation` still kicks in
+  // when the canvas's painted pixel count exceeds the export's pixel
+  // budget, so pixelation feedback is preserved.
+  //
+  // For aspect-changing resize ('exact' with mismatched value/height), the
+  // canvas takes the new aspect ratio and the bitmap is drawn
+  // proportionally centered inside it — bars in the unfilled region show
+  // through as the page background. This is informational signal: the
+  // export will squish the bitmap to fill the target shape (not letterbox),
+  // and the bars tell the user "your source doesn't natively fit." A v1.3
+  // refinement could make the preview squish-match-export by splitting
+  // drawScale into per-axis factors; out of scope for this fix.
   function postTransformDims(img) {
-    const crop = img.transforms.crop;
-    let w = crop ? crop.w : img.source.width;
-    let h = crop ? crop.h : img.source.height;
-    const rot = ((img.transforms.rotate % 360) + 360) % 360;
-    if (rot === 90 || rot === 270) {
-      const tmp = w; w = h; h = tmp;
-    } else if (rot !== 0 && rot !== 180) {
-      const rad = rot * Math.PI / 180;
-      const cos = Math.abs(Math.cos(rad));
-      const sin = Math.abs(Math.sin(rad));
-      const bw = w * cos + h * sin;
-      const bh = w * sin + h * cos;
-      w = bw; h = bh;
-    }
-    return { w, h };
+    return effectiveImageSize(img);
   }
 
   function sizeCanvases(img) {
@@ -574,7 +570,10 @@ export function initPreviewRenderer(lifecycle, caps) {
     );
     baseCtx.restore();
 
-    // Divider line + small "Original | Edited" label.
+    // Divider line + a grab-handle pill centered vertically. The handle is
+    // a shape-based affordance (not just color) so it reads as "draggable"
+    // for colorblind users too. Drag handler lives in attachCompareDragHandlers
+    // below — tolerance is 12 CSS pixels around the divider X.
     baseCtx.save();
     baseCtx.setTransform(1, 0, 0, 1, 0, 0);
     baseCtx.fillStyle = 'rgba(255, 255, 255, 0.9)';
@@ -582,6 +581,45 @@ export function initPreviewRenderer(lifecycle, caps) {
     baseCtx.strokeStyle = 'rgba(0, 0, 0, 0.5)';
     baseCtx.lineWidth = 1;
     baseCtx.strokeRect(splitX - 1, 0, 2, ds.canvasH);
+
+    // Grab handle pill. Sized as a fraction of canvas height with min/max
+    // clamps so it stays usable on both tiny thumbnails and huge previews.
+    const handleH = Math.min(48, Math.max(24, ds.canvasH * 0.07));
+    const handleW = 14;
+    const hx = splitX - handleW / 2;
+    const hy = (ds.canvasH - handleH) / 2;
+    const r = Math.min(6, handleW / 2);
+    baseCtx.fillStyle   = 'rgba(255, 255, 255, 0.95)';
+    baseCtx.strokeStyle = 'rgba(0, 0, 0, 0.55)';
+    baseCtx.lineWidth   = 1;
+    baseCtx.beginPath();
+    baseCtx.moveTo(hx + r,           hy);
+    baseCtx.lineTo(hx + handleW - r, hy);
+    baseCtx.quadraticCurveTo(hx + handleW, hy,             hx + handleW, hy + r);
+    baseCtx.lineTo(hx + handleW,     hy + handleH - r);
+    baseCtx.quadraticCurveTo(hx + handleW, hy + handleH,   hx + handleW - r, hy + handleH);
+    baseCtx.lineTo(hx + r,           hy + handleH);
+    baseCtx.quadraticCurveTo(hx,     hy + handleH,         hx,           hy + handleH - r);
+    baseCtx.lineTo(hx,               hy + r);
+    baseCtx.quadraticCurveTo(hx,     hy,                   hx + r,       hy);
+    baseCtx.closePath();
+    baseCtx.fill();
+    baseCtx.stroke();
+
+    // Two chevron arrows inside the pill, pointing outward (← →).
+    baseCtx.strokeStyle = 'rgba(0, 0, 0, 0.7)';
+    baseCtx.lineWidth   = 1.5;
+    baseCtx.lineCap     = 'round';
+    baseCtx.lineJoin    = 'round';
+    const midY = ds.canvasH / 2;
+    baseCtx.beginPath();
+    baseCtx.moveTo(splitX - 2, midY - 4);
+    baseCtx.lineTo(splitX - 5, midY);
+    baseCtx.lineTo(splitX - 2, midY + 4);
+    baseCtx.moveTo(splitX + 2, midY - 4);
+    baseCtx.lineTo(splitX + 5, midY);
+    baseCtx.lineTo(splitX + 2, midY + 4);
+    baseCtx.stroke();
     baseCtx.restore();
   }
 
@@ -941,6 +979,86 @@ export function initPreviewRenderer(lifecycle, caps) {
       }
     };
     tryObserve();
+  }
+
+  // v1.2 compare-with-original: wire pointer events so the user can drag the
+  // divider to move the original-vs-edited seam. Attached lazily on the
+  // overlay canvas (which sits above the base canvas; tools also listen on
+  // overlay canvas via attachPointer in bubble phase). We use capture phase
+  // + stopImmediatePropagation so a click near the divider in compareMode
+  // takes priority over the active tool's pointer handlers.
+  //
+  // Tolerance is 12 CSS pixels — wide enough for touch, narrow enough that
+  // most clicks still pass through to the tool when compareMode is on but
+  // the user isn't aiming for the divider.
+  const COMPARE_GRAB_TOLERANCE = 12; // CSS pixels
+  const tryAttachCompareDrag = () => {
+    if (bindDom()) {
+      attachCompareDragHandlers(overlayCanvas);
+    } else {
+      requestAnimationFrame(tryAttachCompareDrag);
+    }
+  };
+  tryAttachCompareDrag();
+
+  function attachCompareDragHandlers(canvas) {
+    if (!canvas) return;
+    let dragging = false;
+    let captureId = null;
+
+    const eventCssX = (e) => e.clientX - canvas.getBoundingClientRect().left;
+    const canvasCssW = () => canvas.clientWidth || canvas.getBoundingClientRect().width || 0;
+
+    function getDividerCssX() {
+      const s = getState();
+      const raw = s.ui && Number.isFinite(s.ui.compareSplit) ? s.ui.compareSplit : 0.5;
+      const split = Math.max(0, Math.min(1, raw));
+      return canvasCssW() * split;
+    }
+
+    function onDown(e) {
+      const s = getState();
+      if (!s.ui || !s.ui.compareMode) return;
+      const w = canvasCssW();
+      if (!w) return;
+      const distance = Math.abs(eventCssX(e) - getDividerCssX());
+      if (distance > COMPARE_GRAB_TOLERANCE) return;
+      dragging = true;
+      captureId = e.pointerId;
+      try { canvas.setPointerCapture(e.pointerId); } catch { /* older browsers — ok */ }
+      // Also update split to clicked position immediately, so a tap (no drag)
+      // still re-positions the divider.
+      const split = Math.max(0, Math.min(1, eventCssX(e) / w));
+      update(state => { state.ui.compareSplit = split; });
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    }
+
+    function onMove(e) {
+      if (!dragging || e.pointerId !== captureId) return;
+      const w = canvasCssW();
+      if (!w) return;
+      const split = Math.max(0, Math.min(1, eventCssX(e) / w));
+      update(state => { state.ui.compareSplit = split; });
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    }
+
+    function onUp(e) {
+      if (!dragging) return;
+      // Even if the released pointerId isn't the one we captured (rare —
+      // multi-touch), end the drag to avoid getting stuck.
+      dragging = false;
+      captureId = null;
+      try { canvas.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    }
+
+    canvas.addEventListener('pointerdown',   onDown, true);
+    canvas.addEventListener('pointermove',   onMove, true);
+    canvas.addEventListener('pointerup',     onUp,   true);
+    canvas.addEventListener('pointercancel', onUp,   true);
   }
 
   // Subscribe to state so transitions wake the loop and trigger redraws.
