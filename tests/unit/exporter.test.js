@@ -35,7 +35,7 @@ if (!globalThis.document) {
   });
 }
 
-const { formatBytes, hasTransparency } = await import('../../js/exporter.js');
+const { formatBytes, hasTransparency, watermarkCacheKey } = await import('../../js/exporter.js');
 
 // --- formatBytes ---------------------------------------------------------
 
@@ -125,5 +125,86 @@ test('hasTransparency: chromakey config with tolerance but no hex → true (conf
   assert.equal(
     hasTransparency({ source: { type: 'image/jpeg' }, chromakey: { tolerance: 25 } }),
     true,
+  );
+});
+
+// --- watermarkCacheKey ---------------------------------------------------
+//
+// Regression coverage for v1.2.08 cache-key bug: changing watermark state
+// MUST produce a different fingerprint so the predict-encode cache misses
+// and the next export bakes in the new settings. Before the fix, the cache
+// key only included per-image state; toggling the watermark or tweaking
+// scale produced a cache HIT and re-served stale bytes.
+
+test('watermarkCacheKey: disabled / null / undefined all hash to "wm:off"', () => {
+  assert.equal(watermarkCacheKey(null), 'wm:off');
+  assert.equal(watermarkCacheKey(undefined), 'wm:off');
+  assert.equal(watermarkCacheKey({}), 'wm:off');
+  assert.equal(watermarkCacheKey({ enabled: false }), 'wm:off');
+  assert.equal(watermarkCacheKey({ enabled: false, scale: 0.5 }), 'wm:off');
+});
+
+test('watermarkCacheKey: enabled → not "wm:off", and starts with "wm:on"', () => {
+  const k = watermarkCacheKey({ enabled: true, type: 'text', text: 'A' });
+  assert.notEqual(k, 'wm:off');
+  assert.ok(k.startsWith('wm:on'), `expected key to start with "wm:on", got ${k}`);
+});
+
+test('watermarkCacheKey: toggling enabled flips the fingerprint (Bug fix)', () => {
+  const base = {
+    type: 'text', text: '© Dan', position: 'bottom-right',
+    opacity: 0.6, scale: 0.15, tiledAngle: -30,
+    customX: 0.5, customY: 0.5,
+    textFont: 'sans-serif', textSize: 0.04, textColor: '#fff',
+  };
+  const off = watermarkCacheKey({ ...base, enabled: false });
+  const on  = watermarkCacheKey({ ...base, enabled: true  });
+  assert.notEqual(on, off);
+});
+
+test('watermarkCacheKey: changing scale invalidates the key (Bug 1 regression)', () => {
+  const base = { enabled: true, type: 'text', text: 'X', position: 'tiled', opacity: 0.6, tiledAngle: -30 };
+  const a = watermarkCacheKey({ ...base, scale: 0.28 });
+  const b = watermarkCacheKey({ ...base, scale: 0.30 });
+  assert.notEqual(a, b);
+});
+
+test('watermarkCacheKey: changing position invalidates the key', () => {
+  const base = { enabled: true, type: 'text', text: 'X', scale: 0.15, opacity: 0.6 };
+  assert.notEqual(
+    watermarkCacheKey({ ...base, position: 'bottom-right' }),
+    watermarkCacheKey({ ...base, position: 'top-left' }),
+  );
+});
+
+test('watermarkCacheKey: changing text / color / opacity each invalidates the key', () => {
+  const base = {
+    enabled: true, type: 'text', text: '© Dan', position: 'bottom-right',
+    scale: 0.15, opacity: 0.6, textColor: '#ffffff', textFont: 'sans-serif',
+  };
+  const ref = watermarkCacheKey(base);
+  assert.notEqual(watermarkCacheKey({ ...base, text: '© Other' }), ref);
+  assert.notEqual(watermarkCacheKey({ ...base, textColor: '#000000' }), ref);
+  assert.notEqual(watermarkCacheKey({ ...base, opacity: 0.4 }), ref);
+});
+
+test('watermarkCacheKey: identical inputs produce identical keys (stable)', () => {
+  const wm = {
+    enabled: true, type: 'image', position: 'tiled',
+    opacity: 0.5, scale: 0.2, tiledAngle: -30,
+    customX: 0.3, customY: 0.7,
+    text: '', textFont: 'sans-serif', textSize: 0.04, textColor: '#fff',
+    imageBlobBase64: 'AAAA',
+  };
+  assert.equal(watermarkCacheKey(wm), watermarkCacheKey({ ...wm }));
+});
+
+test('watermarkCacheKey: skips transient imageBlobUrl (regenerates each session)', () => {
+  // Two watermarks identical except for imageBlobUrl should hash the same —
+  // the URL is a fresh ObjectURL per session, NOT a content-bearing field.
+  const base = { enabled: true, type: 'image', scale: 0.15, opacity: 0.6, imageBlobBase64: 'XYZ' };
+  assert.equal(
+    watermarkCacheKey({ ...base, imageBlobUrl: 'blob:foo' }),
+    watermarkCacheKey({ ...base, imageBlobUrl: 'blob:bar' }),
   );
 });

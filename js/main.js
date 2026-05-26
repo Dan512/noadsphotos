@@ -3,6 +3,7 @@ import { probeCapabilities } from './capabilities.js';
 import { showToast } from './errors.js';
 import { createLifecycle } from './lifecycle.js';
 import { initImporter } from './importer.js';
+import { initShareTarget } from './shareTarget.js';
 import { initQueueView, setQueueViewContext } from './queueView.js';
 import { initViews } from './views.js';
 import { initEditor } from './editor.js';
@@ -17,6 +18,8 @@ import { initTextTool } from './tools/textTool.js';
 import { initBrushTool } from './tools/brushTool.js';
 import { initShapeTool } from './tools/shapeTool.js';
 import { initRedactTool } from './tools/redactTool.js';
+import { initTransparentPngTool } from './tools/transparentPngTool.js';
+import { initWatermarkTool } from './tools/watermarkTool.js';
 import { initBgRemoveTool } from './tools/bgRemoveTool.js';
 import { initShortcuts } from './shortcuts.js';
 import { setExportContext } from './exporter.js';
@@ -24,6 +27,7 @@ import { initI18n, t } from './i18n.js';
 import { initLanguagePicker } from './languagePicker.js';
 import { initSettings } from './settings.js';
 import { initPrivacy } from './privacy.js';
+import { initTargetSizeFromStorage, initUploadReadyFromStorage, initWatermarkFromStorage } from './state.js';
 
 async function boot() {
   // Init i18n FIRST so the static DOM (topbar, footer) and every subsequent
@@ -37,6 +41,17 @@ async function boot() {
   initSettings();
   // Privacy modal also only needs the static footer button.
   initPrivacy();
+  // Restore the target-size slice (Feature 11). Safe to call before the
+  // editor / queue panels build — they read state.ui.targetSize during
+  // their first sync pass, after this restore has applied.
+  initTargetSizeFromStorage();
+  // Restore the upload-ready slice (Feature 9). Same call site / posture
+  // as initTargetSizeFromStorage — both slices feed into export-panel UI.
+  initUploadReadyFromStorage();
+  // Restore the watermark slice (Feature 12). Wired before the editor /
+  // tools mount so the renderer sees the persisted config on its very
+  // first frame (preview + drag-to-position both depend on it).
+  initWatermarkFromStorage();
 
   const caps = await probeCapabilities();
   if (!caps.webp) {
@@ -58,6 +73,11 @@ async function boot() {
   // is harmless there).
   initBottomSheet();
   initImporter(caps, lifecycle);
+  // Feature #14: Android PWA share-target — same caps/lifecycle as the
+  // regular importer so shared files flow through the identical pipeline.
+  // No-op in browsers without launchQueue unless ?share-target is present
+  // in the URL (in which case it surfaces an honest "unsupported" toast).
+  initShareTarget(caps, lifecycle);
   initPreviewRenderer(lifecycle, caps);
   // Exporter needs lifecycle + caps refs so the Download button can act.
   setExportContext({ lifecycle, caps });
@@ -75,6 +95,8 @@ async function boot() {
   initBrushTool();
   initShapeTool();
   initRedactTool();
+  initTransparentPngTool();
+  initWatermarkTool();
   initBgRemoveTool();
   // Global keyboard shortcuts (Ctrl/Cmd+Z, etc.).
   initShortcuts();

@@ -23,6 +23,8 @@ import { drawRedact, applyRedactFx } from '../ops/redact.js';
 import { drawOverlaySync, getOverlayBounds } from '../overlays.js';
 import { getSetting } from '../settings.js';
 import { effectiveImageSize } from '../geometry.js';
+import { applyWatermark } from '../ops/watermark.js';
+import { getCachedWatermarkBitmap } from '../tools/watermarkTool.js';
 
 // Module-level registry of per-type overlay drawers. All four kinds are
 // registered upfront — they're cheap pure functions and avoiding dynamic
@@ -548,7 +550,42 @@ export function initPreviewRenderer(lifecycle, caps) {
     // anyone asks.
     applyCompareSplit(img, ds);
 
+    // Watermark pass (v1.3 Feature 12). Painted AFTER compare-split so the
+    // user sees the watermark on whichever side will actually be exported
+    // (the right-hand "edited" side). The watermark itself is a global
+    // setting (state.ui.watermark) — not part of img.overlays — so it
+    // applies uniformly across the queue. Mirrors the exportRenderer pass
+    // exactly: same applyWatermark, same canvas dims.
+    applyWatermarkPass(img, ds);
+
     return true;
+  }
+
+  function applyWatermarkPass(img, ds) {
+    if (!baseCtx || !ds) return;
+    const wm = getState().ui && getState().ui.watermark;
+    if (!wm || !wm.enabled) return;
+    // In compare mode, restrict the watermark to the RIGHT (edited) side so
+    // the original on the left stays clean — gives the user an honest
+    // before/after where the watermark is part of "after."
+    const s = getState();
+    const compareMode = s.ui && s.ui.compareMode;
+    baseCtx.save();
+    baseCtx.setTransform(1, 0, 0, 1, 0, 0);
+    if (compareMode) {
+      const split = Math.max(0, Math.min(1, Number.isFinite(s.ui.compareSplit) ? s.ui.compareSplit : 0.5));
+      const splitX = Math.round(ds.canvasW * split);
+      baseCtx.beginPath();
+      baseCtx.rect(splitX, 0, ds.canvasW - splitX, ds.canvasH);
+      baseCtx.clip();
+    }
+    applyWatermark(baseCtx, {
+      canvasWidth: ds.canvasW,
+      canvasHeight: ds.canvasH,
+      watermark: wm,
+      imageBitmap: wm.type === 'image' ? getCachedWatermarkBitmap() : null,
+    });
+    baseCtx.restore();
   }
 
   // Draw the raw source bitmap into the left portion of the base canvas
@@ -1192,6 +1229,7 @@ export function initPreviewRenderer(lifecycle, caps) {
   let lastCompareMode = false;
   let lastCompareSplit = 0.5;
   let lastOcrPreviewKey = '';
+  let lastWatermarkKey = '';
   subscribe(() => {
     const s = getState();
     if (s.ui.view === 'editor') {
@@ -1238,6 +1276,22 @@ export function initPreviewRenderer(lifecycle, caps) {
         if (opKey !== lastOcrPreviewKey) {
           lastOcrPreviewKey = opKey;
           s.images[id].overlaysDirty = true;
+        }
+        // v1.3 watermark (Feature 12): any change to the watermark slice
+        // needs a base re-bake (watermark is painted INTO the base canvas,
+        // not on a separate layer). Cheap stringified key — the slice is
+        // small and JSON-safe.
+        const wm = s.ui.watermark || {};
+        const wmKey = [
+          wm.enabled ? 1 : 0,
+          wm.type, wm.text, wm.textFont, wm.textColor,
+          wm.imageBlobUrl || '',
+          wm.position, wm.customX, wm.customY,
+          wm.opacity, wm.scale, wm.tiledAngle,
+        ].join('|');
+        if (wmKey !== lastWatermarkKey) {
+          lastWatermarkKey = wmKey;
+          s.images[id].baseDirty = true;
         }
       }
     }

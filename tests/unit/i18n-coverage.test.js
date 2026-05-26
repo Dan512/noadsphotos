@@ -74,6 +74,10 @@ const I18N_PROP_RE   = /\bi18n\s*:\s*['"]([a-zA-Z][a-zA-Z0-9_-]*)['"]/g;
 // `tool.tipKey` dynamically, so without this pattern the dead-key detector
 // would flag editorToolPanTip / editorToolEyedropperTip / etc. as orphans.
 const TIPKEY_PROP_RE = /\btipKey\s*:\s*['"]([a-zA-Z][a-zA-Z0-9_-]*)['"]/g;
+// `labelKey: 'targetSizePresetFoo'` — used in targetSizePresets.js (and
+// potentially future catalogs) where UI code reads `entry.labelKey`
+// dynamically and passes it to t(). Same shape as tipKey.
+const LABELKEY_PROP_RE = /\blabelKey\s*:\s*['"]([a-zA-Z][a-zA-Z0-9_-]*)['"]/g;
 
 function collectFiles() {
   const out = [];
@@ -111,6 +115,7 @@ function extractKeys(content) {
   for (const m of content.matchAll(T_CALL_RE))       keys.add(m[1]);
   for (const m of content.matchAll(I18N_PROP_RE))    keys.add(m[1]);
   for (const m of content.matchAll(TIPKEY_PROP_RE))  keys.add(m[1]);
+  for (const m of content.matchAll(LABELKEY_PROP_RE)) keys.add(m[1]);
   return keys;
 }
 
@@ -154,6 +159,23 @@ const KNOWN_DYNAMIC_KEYS = new Set([
   'redactDetectSensitivityStrict',
   'redactDetectSensitivityNormal',
   'redactDetectSensitivityLoose',
+  // watermarkTool.js (v1.3 Feature 12): type-chip labels picked via ternary
+  // (`t2 === 'text' ? 'watermarkTypeText' : 'watermarkTypeImage'`) and the
+  // 9-grid position chip labels resolved through the POSITION_LABEL_KEYS map
+  // — the regex sees `t(labelKey)` and can't follow the lookup. The Custom
+  // label is set programmatically when the user drags the watermark.
+  'watermarkTypeText',
+  'watermarkTypeImage',
+  'watermarkPositionTopLeft',
+  'watermarkPositionTop',
+  'watermarkPositionTopRight',
+  'watermarkPositionLeft',
+  'watermarkPositionCenter',
+  'watermarkPositionRight',
+  'watermarkPositionBottomLeft',
+  'watermarkPositionBottom',
+  'watermarkPositionBottomRight',
+  'watermarkPositionCustom',
 ]);
 
 test('every referenced i18n key exists in TRANSLATIONS.en', () => {

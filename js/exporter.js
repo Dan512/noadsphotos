@@ -27,6 +27,8 @@ import { escapeHtml } from './escape.js';
 import { loadJSZip } from './vendor/jszip-loader.js';
 import { t } from './i18n.js';
 import { extractExifSegment, injectExifIntoJpeg } from './exif.js';
+import { bisectQuality, bisectQualityWithResize } from './ops/targetSize.js';
+import { shouldDownscale } from './ops/uploadReady.js';
 
 /**
  * Pretty-print a byte count. Used by the predicted-size readout, success
@@ -170,6 +172,42 @@ function makePredictKey(imageId, format, quality, stateSignature) {
 }
 
 /**
+ * Produce a stable, compact string fingerprint of the global watermark
+ * settings that affect the rendered output. Used as part of the predict-
+ * encode cache key so changes to watermark state (enable, scale, position,
+ * color, etc.) invalidate the cache and force a fresh render on the next
+ * export.
+ *
+ * Bug fix for v1.2.08: the cache key only included per-image state, so
+ * toggling the watermark or tweaking its settings produced no cache miss —
+ * stale bytes (with the wrong / no watermark) were re-served on Download.
+ *
+ * Skips transient fields (imageBlobUrl regenerates each session even for
+ * the same logo). Uses imageBlobBase64.length as a cheap "is the logo
+ * different" proxy — two different logos with the same base64 byte length
+ * would be a false cache hit, but that's vanishingly unlikely AND only
+ * matters when type === 'image'.
+ *
+ * @param {object|null|undefined} wm — state.ui.watermark shape
+ * @returns {string}
+ */
+export function watermarkCacheKey(wm) {
+  if (!wm || !wm.enabled) return 'wm:off';
+  return [
+    'wm:on',
+    wm.type || '',
+    wm.position || '',
+    wm.customX, wm.customY,
+    wm.opacity, wm.scale, wm.tiledAngle,
+    wm.text || '',
+    wm.textFont || '',
+    wm.textSize,
+    wm.textColor || '',
+    (wm.imageBlobBase64 || '').length,
+  ].join('|');
+}
+
+/**
  * Record the latest predict-encode result so a follow-up Download click can
  * reuse the bytes. Caller is responsible for keying — we just store last.
  */
@@ -307,6 +345,491 @@ export async function exportSingle(imageId, lifecycleOrOpts = ctxLifecycle, caps
   // visitors.
   showToast(t('exportSuccessWithSize', { filename, size: formatBytes(blob.size) }), { variant: 'info' });
   return blob;
+}
+
+/**
+ * Export an image to fit under a target file size by bisecting quality (and
+ * optionally dimensions). Reuses the existing renderForExport pipeline for
+ * each encoding attempt — no parallel canvas logic.
+ *
+ * The pure-math bisection lives in js/ops/targetSize.js; this function is the
+ * thin wiring layer that builds the `encodeAtScale` callback, dispatches to
+ * either bisectQuality or bisectQualityWithResize, and translates the result
+ * into a download + filename.
+ *
+ * This function does NOT touch state.ui or surface its own toasts — the UI
+ * task (follow-up) owns the user-facing progress and result feedback. The
+ * caller gets the result object and decides what to render.
+ *
+ * @param {string} imageId
+ * @param {{
+ *   targetBytes: number,
+ *   autoResize?: boolean,    // default true
+ *   format?: 'jpeg' | 'webp', // default 'jpeg'
+ *   minDimension?: number,    // default 320
+ * }} config
+ * @param {{
+ *   lifecycle?: object,
+ *   caps?: object,
+ *   suppressDownload?: boolean,
+ * }} [opts]
+ * @returns {Promise<{
+ *   blob: Blob | null,
+ *   filename: string,
+ *   quality: number,
+ *   scale: number,
+ *   finalWidth: number,
+ *   finalHeight: number,
+ *   totalIters: number,
+ *   fits: boolean,
+ *   hit: string,
+ * }>}
+ */
+export async function exportToTargetSize(imageId, config, opts = {}) {
+  const lifecycle = (opts && opts.lifecycle) || ctxLifecycle;
+  const caps = (opts && opts.caps) || ctxCaps;
+  if (!lifecycle || !caps) {
+    throw new Error('exportToTargetSize: lifecycle/caps not ready');
+  }
+  const s = getState();
+  const img = s.images && s.images[imageId];
+  if (!img) throw new Error('exportToTargetSize: image not found');
+
+  const targetBytes = Number(config && config.targetBytes);
+  if (!Number.isFinite(targetBytes) || targetBytes <= 0) {
+    throw new Error('exportToTargetSize: targetBytes must be a positive number');
+  }
+  const format = (config && config.format) || 'jpeg';
+  // PNG would be a no-op for quality bisection (lossless); the panel UI will
+  // restrict format to jpeg/webp but we sanity-check here too.
+  if (format !== 'jpeg' && format !== 'webp') {
+    throw new Error(`exportToTargetSize: unsupported format ${format}`);
+  }
+  const autoResize = config.autoResize !== false; // default true
+  const minDimension = Number.isFinite(config.minDimension) ? config.minDimension : 320;
+
+  // Determine the source long-edge (post-crop / 90s-rotate, pre-resize) so
+  // bisectQualityWithResize can clamp at minDimension correctly. We use the
+  // raw source dims as a proxy — fine for the clamp math; the actual output
+  // size accounts for crop/rotate via effectiveImageSize inside the renderer.
+  const sourceWidth = (img.source && img.source.width) || 0;
+  const sourceHeight = (img.source && img.source.height) || 0;
+  const sourceLong = Math.max(sourceWidth, sourceHeight);
+
+  // Build a per-attempt state object that overrides transforms.resize with the
+  // current scale factor, expressed as a `longestSide` value. scale=1.0 means
+  // "no extra resize beyond whatever the user already configured"; scale<1
+  // means "downsample to scale * sourceLong on the long edge." We deliberately
+  // override the user's resize directive — auto-target IS the resize when
+  // engaged.
+  function stateAtScale(scale) {
+    if (scale >= 0.9999) {
+      // At full scale, preserve whatever resize the user configured.
+      return img;
+    }
+    const targetLong = Math.max(1, Math.round(sourceLong * scale));
+    return {
+      ...img,
+      transforms: {
+        ...(img.transforms || {}),
+        resize: { mode: 'longestSide', value: targetLong },
+      },
+    };
+  }
+
+  async function encodeAtScale(scale, quality) {
+    const attemptState = stateAtScale(scale);
+    try {
+      return await renderForExport(attemptState, { format, quality }, caps, lifecycle);
+    } catch (err) {
+      // Re-throw EncodeError as-is so callers can distinguish it from a
+      // generic render failure.
+      if (err instanceof EncodeError) throw err;
+      throw err;
+    }
+  }
+
+  let bisectResult;
+  if (autoResize) {
+    bisectResult = await bisectQualityWithResize({
+      encodeAtScale,
+      target: targetBytes,
+      sourceWidth,
+      sourceHeight,
+      minDimension,
+    });
+  } else {
+    const encode = (q) => encodeAtScale(1, q);
+    const inner = await bisectQuality({ encode, target: targetBytes });
+    bisectResult = {
+      blob: inner.blob,
+      quality: inner.quality,
+      scale: 1,
+      finalWidth: sourceWidth,
+      finalHeight: sourceHeight,
+      totalIters: inner.iters,
+      fits: inner.fits,
+      hit: inner.hit === 'overshot' ? 'unreachable' : inner.hit,
+    };
+  }
+
+  const filename = makeFilename(img, format, '{base}-targetsize');
+
+  if (bisectResult.blob && !(opts && opts.suppressDownload)) {
+    try {
+      triggerDownload(bisectResult.blob, filename);
+      lastExportedBlob = bisectResult.blob;
+      lastExportedFilename = filename;
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('exportToTargetSize: download trigger failed', err);
+      // Still return the result so the caller can decide what to do.
+    }
+  }
+
+  return {
+    blob: bisectResult.blob,
+    filename,
+    quality: bisectResult.quality,
+    scale: bisectResult.scale,
+    finalWidth: bisectResult.finalWidth,
+    finalHeight: bisectResult.finalHeight,
+    totalIters: bisectResult.totalIters,
+    fits: bisectResult.fits,
+    hit: bisectResult.hit,
+  };
+}
+
+/**
+ * Batch-export every image in the queue under a target file size, bundled
+ * into a single ZIP. Reuses `exportToTargetSize` per image with
+ * `suppressDownload: true` so we collect Blobs instead of triggering N
+ * individual browser downloads.
+ *
+ * Sequential to bound peak memory — one bisection runs at a time. After
+ * each image is encoded, its decoded bitmap is evicted (if it isn't the
+ * active editor image).
+ *
+ * `onProgress({ done, total })` fires after each image so the caller can
+ * keep a progress toast in sync.
+ *
+ * @param {{
+ *   targetBytes: number,
+ *   autoResize?: boolean,
+ *   format?: 'jpeg' | 'webp',
+ *   minDimension?: number,
+ * }} config
+ * @param {{
+ *   lifecycle?: object,
+ *   caps?: object,
+ *   onProgress?: (info: { done: number, total: number }) => void,
+ * }} [opts]
+ * @returns {Promise<{ done: number, total: number, failed: number, blobs: Array<{ id: string, blob: Blob, filename: string, fits: boolean }> } | null>}
+ */
+export async function exportBatchToTargetSize(config, opts = {}) {
+  const lifecycle = opts.lifecycle || ctxLifecycle;
+  const caps = opts.caps || ctxCaps;
+  if (!lifecycle || !caps) {
+    showToast(t('exportNotReady'), { variant: 'error' });
+    return null;
+  }
+  const s = getState();
+  const ids = [...s.queue];
+  const total = ids.length;
+  if (total === 0) {
+    showToast(t('exportQueueEmpty'), { variant: 'warn' });
+    return null;
+  }
+  const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : null;
+
+  let JSZip;
+  try {
+    JSZip = await loadJSZip();
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('exportBatchToTargetSize: JSZip load failed', err);
+    showToast(t('exportZipLibFailed'), { variant: 'error' });
+    return null;
+  }
+
+  const zip = new JSZip();
+  const usedNames = new Set();
+  const blobs = [];
+  let done = 0;
+  let failed = 0;
+
+  for (const id of ids) {
+    try {
+      const result = await exportToTargetSize(id, config, {
+        lifecycle, caps, suppressDownload: true,
+      });
+      if (result && result.blob) {
+        const safeName = uniquifyName(result.filename, usedNames);
+        usedNames.add(safeName);
+        zip.file(safeName, result.blob);
+        blobs.push({ id, blob: result.blob, filename: safeName, fits: !!result.fits });
+        done += 1;
+      } else {
+        failed += 1;
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('exportBatchToTargetSize: per-image failed', id, err);
+      failed += 1;
+    }
+
+    // Free decoded bitmap unless it's the active image. Mirrors exportBatch.
+    if (id !== getState().ui.activeImageId && lifecycle && typeof lifecycle.evictAfterUse === 'function') {
+      try { lifecycle.evictAfterUse(id); } catch { /* ignore */ }
+    }
+
+    if (onProgress) {
+      try { onProgress({ done: done + failed, total }); } catch { /* ignore */ }
+    }
+  }
+
+  if (done === 0) {
+    showToast(t('exportNothingSucceeded'), { variant: 'error' });
+    return { done: 0, total, failed, blobs: [] };
+  }
+
+  let zipBlob;
+  try {
+    zipBlob = await zip.generateAsync({ type: 'blob', compression: 'STORE', streamFiles: true });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('exportBatchToTargetSize: zip.generateAsync failed', err);
+    showToast(t('exportZipBuildFailed'), { variant: 'error' });
+    return { done, total, failed, blobs };
+  }
+
+  const zipName = `noadsphotos-targetsize-${Date.now()}.zip`;
+  try {
+    triggerDownload(zipBlob, zipName);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('exportBatchToTargetSize: download trigger failed', err);
+    showToast(t('exportZipDownloadFailed'), { variant: 'error' });
+  }
+
+  return { done, total, failed, blobs };
+}
+
+/**
+ * Apply the upload-ready preset (v1.3 Feature 9) to one or more images.
+ * The preset is a fixed composition of existing operations:
+ *
+ *   - Resize: cap the long edge at `config.longEdge` (skipped when the
+ *     source is already smaller — see `shouldDownscale`)
+ *   - Encode: at `config.format` + `config.quality` (quality ignored for png)
+ *   - EXIF: stripped by default (`stripExif: true`). If `stripExif: false`
+ *     AND output is JPEG, the source's APP1 segment is spliced back in via
+ *     the existing `maybePreserveExif` helper.
+ *   - Filename: applied via `applyFilenameTemplate` with the user's template
+ *
+ * Single image: triggers a direct browser download. Multiple images: builds
+ * a ZIP and triggers one download. Always honors `opts.suppressDownload` for
+ * tests / batch wrappers that want the bytes without the side effect.
+ *
+ * Sequential per-image encode (mirrors exportBatch) to keep peak memory bounded.
+ *
+ * @param {string[]} imageIds
+ * @param {{
+ *   longEdge: number,
+ *   format: 'jpeg'|'webp'|'png',
+ *   quality: number,
+ *   stripExif: boolean,
+ *   filenameTemplate: string,
+ * }} config
+ * @param {{
+ *   lifecycle?: object,
+ *   caps?: object,
+ *   suppressDownload?: boolean,
+ *   onProgress?: (info: { done: number, total: number }) => void,
+ * }} [opts]
+ * @returns {Promise<{
+ *   exported: number,
+ *   failed: number,
+ *   total: number,
+ *   blobSize: number,
+ *   zipBlob?: Blob,
+ *   downloadedFilename?: string,
+ * } | null>}
+ */
+export async function applyUploadReadyPreset(imageIds, config, opts = {}) {
+  const lifecycle = opts.lifecycle || ctxLifecycle;
+  const caps = opts.caps || ctxCaps;
+  if (!lifecycle || !caps) {
+    showToast(t('exportNotReady'), { variant: 'error' });
+    return null;
+  }
+  if (!Array.isArray(imageIds) || imageIds.length === 0) {
+    showToast(t('exportQueueEmpty'), { variant: 'warn' });
+    return null;
+  }
+  if (!config || typeof config !== 'object') {
+    throw new Error('applyUploadReadyPreset: config is required');
+  }
+  const format = (config.format === 'png' || config.format === 'webp') ? config.format : 'jpeg';
+  const longEdge = Number(config.longEdge);
+  if (!Number.isFinite(longEdge) || longEdge <= 0) {
+    throw new Error('applyUploadReadyPreset: longEdge must be a positive number');
+  }
+  const quality = Number.isFinite(config.quality) ? config.quality : 0.85;
+  const stripExif = config.stripExif !== false;
+  const filenameTemplate = (typeof config.filenameTemplate === 'string' && config.filenameTemplate.length > 0)
+    ? config.filenameTemplate
+    : '{base}-edited';
+  const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : null;
+  const suppress = !!opts.suppressDownload;
+
+  const state = getState();
+  const total = imageIds.length;
+  const encoded = []; // { id, blob, filename }
+  let failed = 0;
+  let totalBytes = 0;
+  const usedNames = new Set();
+
+  for (let i = 0; i < imageIds.length; i++) {
+    const id = imageIds[i];
+    const img = (state.images || {})[id] || (getState().images || {})[id];
+    if (!img) {
+      failed += 1;
+      if (onProgress) {
+        try { onProgress({ done: encoded.length + failed, total }); } catch { /* ignore */ }
+      }
+      continue;
+    }
+    // Build a per-attempt state object that overrides transforms.resize with
+    // the preset's long-edge cap — but only when the source actually exceeds
+    // it. This mirrors the pattern in exportToTargetSize (`stateAtScale`).
+    const srcW = (img.source && img.source.width) || 0;
+    const srcH = (img.source && img.source.height) || 0;
+    let attemptState = img;
+    if (shouldDownscale(srcW, srcH, longEdge)) {
+      attemptState = {
+        ...img,
+        transforms: {
+          ...(img.transforms || {}),
+          resize: { mode: 'longestSide', value: longEdge },
+        },
+      };
+    }
+
+    let blob;
+    try {
+      blob = await renderForExport(attemptState, { format, quality }, caps, lifecycle);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('applyUploadReadyPreset: encode failed for', id, err);
+      failed += 1;
+      if (onProgress) {
+        try { onProgress({ done: encoded.length + failed, total }); } catch { /* ignore */ }
+      }
+      continue;
+    }
+
+    // EXIF: preserve segment iff stripExif is OFF and output is JPEG. The
+    // existing maybePreserveExif helper takes a "strip" boolean (true means
+    // strip), so we pass !stripExif inverted to its semantics: stripExif
+    // true → strip true → no-op; stripExif false → strip false → inject.
+    try {
+      blob = await maybePreserveExif(img, blob, format, stripExif);
+    } catch (err) {
+      // Soft fault — the stripped blob is still a valid export.
+      // eslint-disable-next-line no-console
+      console.warn('applyUploadReadyPreset: EXIF preserve failed for', id, err);
+    }
+
+    const baseName = applyFilenameTemplate(filenameTemplate, img, i, format, total);
+    const filename = uniquifyName(baseName, usedNames);
+    usedNames.add(filename);
+    encoded.push({ id, blob, filename });
+    totalBytes += blob.size;
+
+    // Free decoded bitmap if not the active editor image (mirrors exportBatch).
+    if (id !== getState().ui.activeImageId && lifecycle && typeof lifecycle.evictAfterUse === 'function') {
+      try { lifecycle.evictAfterUse(id); } catch { /* ignore */ }
+    }
+
+    if (onProgress) {
+      try { onProgress({ done: encoded.length + failed, total }); } catch { /* ignore */ }
+    }
+  }
+
+  if (encoded.length === 0) {
+    return { exported: 0, failed, total, blobSize: 0 };
+  }
+
+  // Single-image path: direct download, no ZIP wrapping.
+  if (encoded.length === 1) {
+    const { blob, filename } = encoded[0];
+    if (!suppress) {
+      try {
+        triggerDownload(blob, filename);
+        lastExportedBlob = blob;
+        lastExportedFilename = filename;
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('applyUploadReadyPreset: download trigger failed', err);
+        showToast(t('exportDownloadFailedSingle'), { variant: 'error' });
+      }
+    }
+    return {
+      exported: 1,
+      failed,
+      total,
+      blobSize: blob.size,
+      downloadedFilename: filename,
+    };
+  }
+
+  // Multi-image path: build ZIP, trigger one download.
+  let JSZip;
+  try {
+    JSZip = await loadJSZip();
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('applyUploadReadyPreset: JSZip load failed', err);
+    showToast(t('exportZipLibFailed'), { variant: 'error' });
+    return { exported: encoded.length, failed, total, blobSize: totalBytes };
+  }
+  const zip = new JSZip();
+  for (const { blob, filename } of encoded) {
+    zip.file(filename, blob);
+  }
+  let zipBlob;
+  try {
+    zipBlob = await zip.generateAsync({ type: 'blob', compression: 'STORE', streamFiles: true });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('applyUploadReadyPreset: zip.generateAsync failed', err);
+    showToast(t('exportZipBuildFailed'), { variant: 'error' });
+    return { exported: encoded.length, failed, total, blobSize: totalBytes };
+  }
+  const zipName = `upload-ready-${formatDate(new Date())}.zip`;
+  if (!suppress) {
+    try {
+      triggerDownload(zipBlob, zipName);
+      // Record the first per-image blob (not the ZIP) for "Verify last export"
+      // — matches exportBatch's behavior so the metadata audit inspects a
+      // representative image, not the archive container.
+      lastExportedBlob = encoded[0].blob;
+      lastExportedFilename = encoded[0].filename;
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('applyUploadReadyPreset: download trigger failed', err);
+      showToast(t('exportZipDownloadFailed'), { variant: 'error' });
+    }
+  }
+  return {
+    exported: encoded.length,
+    failed,
+    total,
+    blobSize: zipBlob.size,
+    zipBlob,
+    downloadedFilename: zipName,
+  };
 }
 
 /**

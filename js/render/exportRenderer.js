@@ -39,6 +39,9 @@ import { drawBrush } from '../ops/brush.js';
 import { drawShape } from '../ops/shape.js';
 import { applyRedactFx } from '../ops/redact.js';
 import { encodeCanvas } from '../codec.js';
+import { applyWatermark } from '../ops/watermark.js';
+import { getState } from '../state.js';
+import { getCachedWatermarkBitmap } from '../tools/watermarkTool.js';
 
 // Redact is intentionally NOT in this map: its pixel-mutating effect runs
 // in a dedicated pass against the working canvas (see applyRedactsToCanvas)
@@ -128,12 +131,39 @@ export async function renderForExport(imageState, opts, caps, lifecycle) {
     ? downscale(canvas, finalDims.w, finalDims.h)
     : canvas;
 
-  // 6. Encode. Quality is ignored for PNG; codec.encodeCanvas passes it
+  // 6. Watermark pass (v1.3 Feature 12). Painted AFTER resize so the
+  // watermark's scale is a fraction of the FINAL exported dimensions — the
+  // user picked "15% of long edge" and gets 15% of the file they receive,
+  // not 15% of some pre-resize intermediate. This is also why we read the
+  // global state.ui.watermark here rather than off the imageState: the
+  // watermark is a one-knob preference that applies uniformly to every
+  // export, not a per-image overlay.
+  applyWatermarkToCanvas(outputCanvas);
+
+  // 7. Encode. Quality is ignored for PNG; codec.encodeCanvas passes it
   // through to canvas.toBlob, which handles that. We normalize the requested
   // format here so callers can pass the short form ('png') that state.export
   // stores OR a full MIME ('image/png') — the codec checks blob.type strictly
   // against this string.
   return encodeCanvas(outputCanvas, normalizeMime(opts.format), opts.quality);
+}
+
+// Paint the watermark onto the given output canvas in place. No-op when the
+// master toggle is off. Reads state directly because this is a global
+// setting, not a per-image concern.
+function applyWatermarkToCanvas(canvas) {
+  if (!canvas) return;
+  const s = getState();
+  const wm = s && s.ui && s.ui.watermark;
+  if (!wm || !wm.enabled) return;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  applyWatermark(ctx, {
+    canvasWidth: canvas.width,
+    canvasHeight: canvas.height,
+    watermark: wm,
+    imageBitmap: wm.type === 'image' ? getCachedWatermarkBitmap() : null,
+  });
 }
 
 /**

@@ -80,10 +80,22 @@ export function initSettings() {
 function seedExportDefaults() {
   const fmt = getSetting('defaultExportFormat');
   const q = getSetting('defaultQuality');
+  // If the user has explicitly stored a defaultExportFormat preference in
+  // their settings, treat that as a session-level lock so the smart match-
+  // source default (see js/ops/formatSmart.js) doesn't quietly override
+  // their stated preference on the first import. When the value comes from
+  // the schema default (no localStorage entry), leave _userFormatLocked
+  // false so smart-default still has a chance to act.
+  const userHasExplicitFormat = !!(
+    getState().ui &&
+    getState().ui.settings &&
+    Object.prototype.hasOwnProperty.call(getState().ui.settings, 'defaultExportFormat')
+  );
   update(s => {
     if (!s.export) return;
     s.export.format = fmt;
     s.export.quality = q;
+    if (userHasExplicitFormat) s.export._userFormatLocked = true;
   });
 }
 

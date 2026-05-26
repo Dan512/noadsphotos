@@ -27,9 +27,19 @@ import {
   exportBatch,
   exportEachIndividually,
   exportBatchPdf,
+  exportBatchToTargetSize,
+  applyUploadReadyPreset,
   pickSmallestFormat,
   formatBytes,
 } from './exporter.js';
+import { getActiveTargetBytes } from './targetSizePresets.js';
+import {
+  buildTargetSizeSection,
+  syncTargetSizeSection,
+  buildUploadReadySection,
+  syncUploadReadySection,
+} from './editor.js';
+import { buildWatermarkSection } from './tools/watermarkTool.js';
 import { renderForExport } from './render/exportRenderer.js';
 import { showToast } from './errors.js';
 import { applyBgRemoveBatch } from './ops/bgremove.js';
@@ -83,6 +93,12 @@ let batchRedoBtn = null;
 export function initQueueView() {
   render(getState());
   subscribe(render);
+  // Watermark-driven batch thumb refresh. Bug fix: previously the batch
+  // grid kept its pre-watermark thumbnails forever because nothing called
+  // maybeRefreshThumbs() when state.ui.watermark changed. This subscriber
+  // debounces (200ms preset / 2000ms tiled — Dan's UX spec) and skips the
+  // first sighting so boot doesn't trigger a refresh.
+  subscribe(() => { scheduleBatchWatermarkRefresh(); });
   // v1.1.2: single history subscriber that does two things:
   //   1. Refresh queue thumbnails on undo/redo so the grid reflects the
   //      reverted state. (Batch-op handlers refresh inline after their
@@ -116,6 +132,12 @@ let ctxCaps = null;
 let refreshInFlight = false;
 let pendingRefresh = null;
 
+// Watermark-driven batch thumb refresh — debounced. Tiled is expensive
+// (many drawImage calls per thumb), so its slider drags get a long settle;
+// non-tiled positions feel "instant" with a small settle to avoid thrash.
+let watermarkRefreshTimerId = null;
+let lastWatermarkKey = null;
+
 export function setQueueViewContext({ lifecycle, caps } = {}) {
   ctxLifecycle = lifecycle || null;
   ctxCaps = caps || null;
@@ -135,6 +157,63 @@ export function _resetThumbRefreshForTest() {
   lastBatchPredictKey = null;
   lastBatchPredictBytes = null;
   batchSmallestInFlight = false;
+  if (watermarkRefreshTimerId != null) {
+    clearTimeout(watermarkRefreshTimerId);
+    watermarkRefreshTimerId = null;
+  }
+  lastWatermarkKey = null;
+}
+
+// When state.ui.watermark changes, schedule a debounced refresh of every
+// queue thumbnail. The debounce window depends on position: tiled gets 2 s
+// (expensive renders, lots of slider thrash); presets / custom get 200 ms
+// (cheap, feels instant but still coalesces slider drags).
+//
+// Boot-thrash guard: the very first time we see watermark state we just
+// record the key without scheduling — thumbnails were already generated
+// at import time with that exact state, so a refresh would be wasted work.
+function scheduleBatchWatermarkRefresh() {
+  const state = getState();
+  const queueIds = state.queue;
+  if (!queueIds || queueIds.length === 0) return;
+
+  const wm = state.ui.watermark || {};
+  const key = JSON.stringify({
+    enabled: !!wm.enabled,
+    type: wm.type,
+    position: wm.position,
+    customX: wm.customX,
+    customY: wm.customY,
+    opacity: wm.opacity,
+    scale: wm.scale,
+    tiledAngle: wm.tiledAngle,
+    text: wm.text,
+    textFont: wm.textFont,
+    textSize: wm.textSize,
+    textColor: wm.textColor,
+    // proxy for "logo image changed" — exact bytes don't matter for the diff
+    logoLen: (wm.imageBlobBase64 || '').length,
+  });
+  if (key === lastWatermarkKey) return; // no actual change
+
+  const previousKey = lastWatermarkKey;
+  lastWatermarkKey = key;
+
+  // First non-null key sighting in this session: thumbs already reflect this
+  // state from import time. Don't fire a refresh on boot.
+  if (previousKey === null) return;
+
+  const debounceMs = wm.position === 'tiled' ? 2000 : 200;
+
+  if (watermarkRefreshTimerId != null) {
+    clearTimeout(watermarkRefreshTimerId);
+    watermarkRefreshTimerId = null;
+  }
+  watermarkRefreshTimerId = setTimeout(() => {
+    watermarkRefreshTimerId = null;
+    const ids = getState().queue;
+    if (ids && ids.length > 0) maybeRefreshThumbs(ids);
+  }, debounceMs);
 }
 
 /**
@@ -1067,10 +1146,25 @@ function buildBatchPanel() {
     fmtRow.appendChild(btn);
     fmtBtns.set(fmt.id, btn);
     btn.addEventListener('click', () => {
-      update(s => { s.export.format = fmt.id; });
+      // Mirror editor.js#onFormatChange — any explicit chip click locks the
+      // user's format choice for the rest of the session so subsequent
+      // active-image switches don't override it via the smart default.
+      update(s => {
+        s.export.format = fmt.id;
+        s.export._userFormatLocked = true;
+      });
     });
   }
   exportSection.body.appendChild(fmtRow);
+
+  // WebP-over-PNG nudge — same passive hint as the editor's export panel.
+  // Visible only when PNG is the active format; sits directly under the
+  // chip row so the connection is obvious.
+  const fmtHint = document.createElement('p');
+  fmtHint.className = 'export-format-hint batch-format-hint';
+  fmtHint.textContent = t('exportFormatPngWebpHint');
+  fmtHint.hidden = true;
+  exportSection.body.appendChild(fmtHint);
 
   // "Smallest size" button — picks format/quality on the FIRST queue image
   // (assumed representative) and writes the winner to state.export.
@@ -1265,6 +1359,42 @@ function buildBatchPanel() {
 
   panel.appendChild(exportSection.section);
 
+  // --- 7. Target file size (v1.3 Feature 11) -----------------------------
+  // Shared UI shape with the editor's export panel — same chip layout, same
+  // state slice (state.ui.targetSize), same localStorage key. The only
+  // difference here is the apply button: it ZIPs every queue image at the
+  // chosen target instead of the active editor image.
+  const targetSizeEls = buildTargetSizeSection({
+    apply: (btn) => onBatchApplyTargetSize(btn),
+    applyLabel: t('targetSizeApplyBatch'),
+    rowClass: 'target-size-row',
+    sectionClass: 'batch-target-size-section batch-section',
+  });
+  panel.appendChild(targetSizeEls.section);
+
+  // --- 8. Upload-ready preset (v1.3 Feature 9) ---------------------------
+  // Same shared UI as the editor's export panel; the only differences are
+  // the apply-button label ("Apply to all & download ZIP") and the handler
+  // (iterates every queue image, ZIPs the results into a single download).
+  const uploadReadyEls = buildUploadReadySection({
+    apply: (btn) => onBatchApplyUploadReady(btn),
+    applyLabel: t('uploadReadyApplyBatch'),
+    sectionClass: 'batch-upload-ready-section batch-section',
+  });
+  panel.appendChild(uploadReadyEls.section);
+
+  // --- 9. Watermark (v1.3 Feature 12) ------------------------------------
+  // Same shared section the editor's watermark tool uses, hosted inside a
+  // <details> so it's collapsed by default — keeps the batch panel scannable
+  // for users who don't watermark. Both panels mutate the SAME
+  // state.ui.watermark slice, so toggling on here is reflected in the editor
+  // panel and vice versa. The bitmap cache + localStorage persistence are
+  // global, so a logo uploaded in either panel is shared.
+  const watermarkSection = buildSection(t('batchSectionWatermark'), 'batch-watermark-section', false);
+  const watermarkPanelInstance = buildWatermarkSection({ omitDragHint: true, omitHeading: true });
+  watermarkSection.body.appendChild(watermarkPanelInstance.root);
+  panel.appendChild(watermarkSection.section);
+
   // --- Wire actions ------------------------------------------------------
   // Resize mode change: show/hide height field AND relabel the Value row to
   // match the chosen dimension (mirrors single-image resize panel). When the
@@ -1350,10 +1480,14 @@ function buildBatchPanel() {
     sliderRefs, presetSel, adjustApply,
     chromaColor, chromaTol, chromaTolReadout, chromaApply,
     bgBtn,
-    fmtBtns, qInput, qReadout, qualityRow, fnInput, exportBtn, exportEachBtn, exportPdfBtn,
+    fmtBtns, fmtHint, qInput, qReadout, qualityRow, fnInput, exportBtn, exportEachBtn, exportPdfBtn,
     smallestBtn, readout,
     pdfOptsRow, pdfPageSizeSel, pdfOrientSel, pdfMarginInput, pdfFitSel, pdfFitLabel,
     batchStripInput, batchStripHint,
+    // Target file size (v1.3 Feature 11)
+    targetSize: targetSizeEls,
+    // Upload-ready preset (v1.3 Feature 9)
+    uploadReady: uploadReadyEls,
   };
 
   if (!panelSubscribed) {
@@ -1695,7 +1829,7 @@ function syncBatchPanel(state) {
   syncDedupeRow(state);
   syncBatchRedactSection(state);
   if (!panelRefs) return;
-  const exp = state.export || { format: 'png', quality: 0.92, filenameTemplate: '{base}-edited' };
+  const exp = state.export || { format: 'jpeg', quality: 0.92, filenameTemplate: '{base}-edited' };
   const pdfOpts = exp.pdf || { pageSize: 'fit', orientation: 'auto', margins: undefined, fitMode: 'contain' };
   const isPdf = exp.format === 'pdf';
 
@@ -1713,6 +1847,11 @@ function syncBatchPanel(state) {
   for (const [id, btn] of panelRefs.fmtBtns) {
     btn.classList.toggle('is-active', id === exp.format);
     btn.setAttribute('aria-pressed', id === exp.format ? 'true' : 'false');
+  }
+
+  // WebP-over-PNG nudge — visible only when PNG is the active format.
+  if (panelRefs.fmtHint) {
+    panelRefs.fmtHint.hidden = exp.format !== 'png';
   }
 
   // Quality row visibility — only meaningful for JPG / WebP. PDF uses a
@@ -1804,6 +1943,133 @@ function syncBatchPanel(state) {
   panelRefs.exportBtn.disabled = count === 0;
   if (panelRefs.exportPdfBtn) panelRefs.exportPdfBtn.disabled = count === 0;
   if (panelRefs.smallestBtn) panelRefs.smallestBtn.disabled = count === 0 || batchSmallestInFlight;
+
+  // Target-size section (v1.3 Feature 11). Apply gated by "queue has images".
+  if (panelRefs.targetSize) {
+    syncTargetSizeSection(panelRefs.targetSize, count > 0 && !batchTargetSizeInFlight);
+  }
+  // Upload-ready section (v1.3 Feature 9). Same gate.
+  if (panelRefs.uploadReady) {
+    syncUploadReadySection(panelRefs.uploadReady, count > 0 && !batchUploadReadyInFlight);
+  }
+}
+
+// In-flight flag for the batch target-size export. Prevents double-click
+// from kicking off two parallel bisections that fight over the same caps /
+// lifecycle resources.
+let batchTargetSizeInFlight = false;
+
+async function onBatchApplyTargetSize(applyBtn) {
+  if (batchTargetSizeInFlight) return;
+  const ts = getState().ui.targetSize || {};
+  const targetBytes = getActiveTargetBytes(ts);
+  if (!targetBytes) return;
+  const total = getState().queue.length;
+  if (total === 0) return;
+
+  batchTargetSizeInFlight = true;
+  applyBtn.disabled = true;
+  // Sticky progress toast — updates on every per-image completion so the
+  // user sees "5/12 files" tick up. We dismiss + replace because the toast
+  // helper doesn't support in-place text mutation.
+  let progressDismiss = showToast(t('targetSizeWorking'), { variant: 'info', duration: 0 });
+  let lastShown = -1;
+
+  try {
+    const result = await exportBatchToTargetSize({
+      targetBytes,
+      autoResize: ts.autoResize !== false,
+      format: ts.format === 'webp' ? 'webp' : 'jpeg',
+    }, {
+      onProgress: ({ done, total: tot }) => {
+        // Throttle: only re-toast on count change (avoids back-to-back
+        // toast churn if the bisection finishes very quickly).
+        if (done === lastShown) return;
+        lastShown = done;
+        try { progressDismiss(); } catch { /* ignore */ }
+        progressDismiss = showToast(
+          t('targetSizeBatchSuccess', { done, total: tot }),
+          { variant: 'info', duration: 0 },
+        );
+      },
+    });
+    try { progressDismiss(); } catch { /* ignore */ }
+    if (result && result.done > 0) {
+      showToast(
+        t('targetSizeBatchSuccess', { done: result.done, total: result.total }),
+        { variant: result.failed > 0 ? 'warn' : 'info' },
+      );
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('onBatchApplyTargetSize:', err);
+    try { progressDismiss(); } catch { /* ignore */ }
+    showToast(t('exportGenericFailed'), { variant: 'error' });
+  } finally {
+    batchTargetSizeInFlight = false;
+    applyBtn.disabled = false;
+  }
+}
+
+// In-flight flag for the batch upload-ready preset. Prevents double-click
+// from kicking off two parallel encodes.
+let batchUploadReadyInFlight = false;
+
+async function onBatchApplyUploadReady(applyBtn) {
+  if (batchUploadReadyInFlight) return;
+  const ur = getState().ui.uploadReady || {};
+  const ids = [...getState().queue];
+  if (ids.length === 0) return;
+
+  batchUploadReadyInFlight = true;
+  applyBtn.disabled = true;
+  // Sticky progress toast — updates on every per-image completion. We
+  // dismiss + replace because the toast helper doesn't support in-place
+  // text mutation.
+  let progressDismiss = showToast(
+    t('uploadReadyWorking', { done: 0, total: ids.length }),
+    { variant: 'info', duration: 0 },
+  );
+  let lastShown = -1;
+
+  try {
+    const result = await applyUploadReadyPreset(ids, {
+      longEdge: ur.longEdge,
+      format: ur.format,
+      quality: ur.quality,
+      stripExif: ur.stripExif !== false,
+      filenameTemplate: ur.filenameTemplate,
+    }, {
+      lifecycle: ctxLifecycle,
+      caps: ctxCaps,
+      onProgress: ({ done, total: tot }) => {
+        if (done === lastShown) return;
+        lastShown = done;
+        try { progressDismiss(); } catch { /* ignore */ }
+        progressDismiss = showToast(
+          t('uploadReadyWorking', { done, total: tot }),
+          { variant: 'info', duration: 0 },
+        );
+      },
+    });
+    try { progressDismiss(); } catch { /* ignore */ }
+    if (result && result.exported > 0) {
+      showToast(t('uploadReadyBatchSuccess', {
+        count: result.exported,
+        size: formatBytes(result.blobSize || 0),
+      }), { variant: result.failed > 0 ? 'warn' : 'info' });
+    } else if (result) {
+      showToast(t('uploadReadyFailed', { reason: t('exportNothingSucceeded') }), { variant: 'error' });
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('onBatchApplyUploadReady:', err);
+    try { progressDismiss(); } catch { /* ignore */ }
+    showToast(t('uploadReadyFailed', { reason: err && err.message ? err.message : String(err) }), { variant: 'error' });
+  } finally {
+    batchUploadReadyInFlight = false;
+    applyBtn.disabled = false;
+  }
 }
 
 function onBatchPdfOptChange(key, value) {

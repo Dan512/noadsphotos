@@ -716,6 +716,31 @@ main#workspace:has(> #editor-view:not([hidden])) {
 .canvas-frame.is-pan-temporarily-active { cursor: grab; }
 .canvas-frame.is-pan-tool-active.is-panning,
 .canvas-frame.is-pan-temporarily-active.is-panning { cursor: grabbing; }
+
+/* Checkerboard backdrop for the Transparent PNG tool (v1.3 Feature 16).
+   Toggled by transparentPngTool.js via state.ui.transparentPng.checkerboardOn.
+   The four overlapping linear-gradients are the canonical CSS technique —
+   no SVG, no image asset. Dark theme uses a darker gray so the pattern stays
+   subtle (it's a backdrop, not a focal point). */
+.canvas-frame.is-checkerboard {
+  background-color: #fff;
+  background-image:
+    linear-gradient(45deg, #ddd 25%, transparent 25%),
+    linear-gradient(-45deg, #ddd 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #ddd 75%),
+    linear-gradient(-45deg, transparent 75%, #ddd 75%);
+  background-size: 20px 20px;
+  background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+}
+html[data-theme="dark"] .canvas-frame.is-checkerboard {
+  background-color: #2a2a2a;
+  background-image:
+    linear-gradient(45deg, #444 25%, transparent 25%),
+    linear-gradient(-45deg, #444 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #444 75%),
+    linear-gradient(-45deg, transparent 75%, #444 75%);
+}
+
 #base-canvas, #overlay-canvas {
   position: absolute;
   /* Suppress browser pan/zoom gestures so tools own touch input. The
@@ -1623,6 +1648,20 @@ main#workspace:has(> #editor-view:not([hidden])) {
   border-radius: var(--radius-control);
   font-size: var(--t-xs);
   color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+/* Passive WebP-over-PNG nudge under the format chip row. Quieter than the
+   strip-metadata hint (no surface background): it's a discovery affordance,
+   not a warning, so it shouldn't compete with primary controls. Italic +
+   muted ties it to existing helper-text styling. Lives in BOTH the editor
+   export panel and the batch panel — same selector covers both. */
+.editor-panel .export-panel .export-format-hint,
+.batch-panel .export-format-hint {
+  margin: var(--space-xs) 0 0;
+  font-size: var(--t-xs);
+  font-style: italic;
+  color: var(--text-muted);
   line-height: 1.4;
 }
 
@@ -3016,3 +3055,629 @@ dialog.heic-consent-dialog p {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* ---------------------------------------------------------------------------
+   Target file size (v1.3 Feature 11)
+   --------------------------------------------------------------------------
+   Used in two places with identical structure:
+     - .editor-panel .editor-target-size-section (inside the export panel,
+       a nested <details>)
+     - .batch-panel .batch-target-size-section (a top-level batch section)
+   Chip "active" state pairs color with a stronger border + inset shadow +
+   font-weight bump — Dan is colorblind, so two-channel signaling matters
+   (see CLAUDE.md). The same convention is used by .format-chip.is-active.
+   --------------------------------------------------------------------------*/
+.target-size-section > summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: var(--t-sm);
+  padding: var(--space-xs) 0;
+  user-select: none;
+}
+.target-size-section .target-size-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding-top: var(--space-sm);
+}
+
+.target-size-mode-chips,
+.target-size-unit-toggle,
+.target-size-format-group {
+  display: inline-flex;
+  gap: var(--space-xs);
+}
+
+.target-size-mode-chip,
+.target-size-preset-chip,
+.target-size-unit-chip,
+.target-size-format-chip {
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-xs);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-out),
+              border-color var(--dur-fast) var(--ease-out);
+}
+.target-size-mode-chip:hover,
+.target-size-preset-chip:hover,
+.target-size-unit-chip:hover,
+.target-size-format-chip:hover {
+  background: var(--surface-2);
+}
+.target-size-mode-chip.is-active,
+.target-size-preset-chip.is-active,
+.target-size-unit-chip.is-active,
+.target-size-format-chip.is-active {
+  border-color: var(--accent);
+  background: var(--surface-2);
+  color: var(--accent);
+  /* Inset shadow gives a "pressed in" cue independent of color — colorblind
+     users still get a clear active signal. Bold weight further reinforces. */
+  box-shadow: inset 0 0 0 1px var(--accent);
+  font-weight: 700;
+}
+
+/* Preset chips: wrap onto multiple lines because long labels (e.g.
+   "Discord 25 MB") would overflow at panel widths under ~280 px. */
+.target-size-preset-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+/* Avoid the .batch-row[hidden] / display:grid gotcha that bit other rows in
+   this codebase — explicitly restore display:none for hidden state. */
+.target-size-row[hidden],
+.target-size-preset-chips[hidden],
+.target-size-custom-row[hidden],
+.target-size-format-row[hidden] {
+  display: none;
+}
+
+.target-size-custom-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: var(--space-sm);
+  align-items: center;
+  font-size: var(--t-sm);
+}
+.target-size-custom-label {
+  color: var(--text-secondary);
+}
+.target-size-custom-input {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: var(--t-sm);
+  min-width: 0;
+  width: 100%;
+}
+/* Inline validation hint for the custom value field. Visible only when the
+   typed value is invalid (zero / negative / blank). Quiet error styling —
+   the disabled Apply button is the primary signal; this just explains why. */
+.target-size-custom-hint {
+  margin: 0;
+  font-size: var(--t-xs);
+  color: var(--text-muted);
+  font-style: italic;
+}
+.target-size-custom-hint[hidden] {
+  display: none;
+}
+
+.target-size-auto-row {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+  font-size: var(--t-sm);
+  color: var(--text);
+  cursor: pointer;
+}
+.target-size-auto-row > input[type="checkbox"] {
+  cursor: pointer;
+}
+
+.target-size-format-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-sm);
+  align-items: center;
+  font-size: var(--t-sm);
+}
+.target-size-format-label {
+  color: var(--text-secondary);
+}
+
+.target-size-apply {
+  align-self: stretch;
+  margin-top: var(--space-xs);
+  background: var(--accent);
+  color: var(--accent-contrast);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: var(--t-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter var(--dur-fast) var(--ease-out);
+}
+.target-size-apply:hover {
+  filter: brightness(0.95);
+}
+.target-size-apply:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  border-color: var(--border);
+}
+
+/* ---------------------------------------------------------------------------
+   Upload-ready preset (v1.3 Feature 9)
+   --------------------------------------------------------------------------
+   Used in two places with identical structure:
+     - .editor-panel .editor-upload-ready-section (inside the export panel,
+       a nested <details>)
+     - .batch-panel .batch-upload-ready-section (a top-level batch section)
+   Chip "active" state pairs color with stronger border + inset shadow +
+   bolder weight — matches the .target-size-* convention for colorblind
+   safety (see CLAUDE.md).
+   --------------------------------------------------------------------------*/
+.upload-ready-section > summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: var(--t-sm);
+  padding: var(--space-xs) 0;
+  user-select: none;
+}
+.upload-ready-section .upload-ready-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding-top: var(--space-sm);
+}
+
+.upload-ready-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: var(--space-sm);
+  align-items: center;
+  font-size: var(--t-sm);
+}
+.upload-ready-row[hidden] {
+  display: none;
+}
+.upload-ready-label {
+  color: var(--text-secondary);
+}
+
+.upload-ready-longedge,
+.upload-ready-filename {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: var(--t-sm);
+  min-width: 0;
+  width: 100%;
+  grid-column: 2 / 4;
+}
+
+.upload-ready-quality {
+  grid-column: 2 / 3;
+  width: 100%;
+}
+.upload-ready-quality-readout {
+  grid-column: 3 / 4;
+  min-width: 2.5em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  font-size: var(--t-xs);
+}
+
+.upload-ready-format-group {
+  display: inline-flex;
+  gap: var(--space-xs);
+  grid-column: 2 / 4;
+}
+.upload-ready-format-chip {
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-xs);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-out),
+              border-color var(--dur-fast) var(--ease-out);
+}
+.upload-ready-format-chip:hover {
+  background: var(--surface-2);
+}
+.upload-ready-format-chip.is-active {
+  border-color: var(--accent);
+  background: var(--surface-2);
+  color: var(--accent);
+  /* Inset shadow + bold weight = colorblind-safe "active" signal. */
+  box-shadow: inset 0 0 0 1px var(--accent);
+  font-weight: 700;
+}
+
+.upload-ready-strip-row {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+  font-size: var(--t-sm);
+  color: var(--text);
+  cursor: pointer;
+}
+.upload-ready-strip-row > input[type="checkbox"] {
+  cursor: pointer;
+}
+
+.upload-ready-filename-help {
+  margin: 0;
+  font-size: var(--t-xs);
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.upload-ready-apply {
+  align-self: stretch;
+  margin-top: var(--space-xs);
+  background: var(--accent);
+  color: var(--accent-contrast);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: var(--t-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter var(--dur-fast) var(--ease-out);
+}
+.upload-ready-apply:hover {
+  filter: brightness(0.95);
+}
+.upload-ready-apply:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  border-color: var(--border);
+}
+
+/* --- Transparent PNG tool panel (v1.3 Feature 16) ---------------------- */
+.transparent-png-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+.transparent-png-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-sm) 0 0;
+  border-top: 1px solid var(--border);
+}
+.transparent-png-panel > .transparent-png-section:first-of-type {
+  border-top: none;
+  padding-top: 0;
+}
+.transparent-png-subheading {
+  margin: 0;
+  font-size: var(--t-sm);
+  font-weight: 600;
+  color: var(--text);
+}
+.transparent-png-help {
+  margin: 0;
+  font-size: var(--t-xs);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+.transparent-png-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: var(--t-sm);
+}
+.transparent-png-row[hidden] { display: none; }
+.transparent-png-row > span:first-child {
+  min-width: 5.5rem;
+  color: var(--text-secondary);
+}
+.transparent-png-pad-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-xs) var(--space-sm);
+}
+.transparent-png-pad-input {
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-xxs) var(--space-xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-sm);
+}
+.transparent-png-all-sides {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--t-xs);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.transparent-png-all-sides:hover { color: var(--text); }
+.transparent-png-transparent-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xxs);
+  font-size: var(--t-xs);
+  color: var(--text-secondary);
+}
+.transparent-png-pad-color,
+.transparent-png-replace-color {
+  width: 2.5rem;
+  height: 1.75rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  cursor: pointer;
+}
+.transparent-png-pad-color:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.transparent-png-replace-threshold { flex: 1; min-width: 0; }
+.transparent-png-threshold-readout {
+  min-width: 2.5rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  font-size: var(--t-xs);
+}
+.transparent-png-pad-apply,
+.transparent-png-replace-apply {
+  align-self: flex-start;
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-sm);
+  cursor: pointer;
+}
+.transparent-png-pad-apply.btn-primary,
+.transparent-png-replace-apply.btn-primary {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+}
+.transparent-png-pad-apply:disabled,
+.transparent-png-replace-apply:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.transparent-png-checker-row {
+  font-size: var(--t-sm);
+  color: var(--text);
+}
+
+/* --- Watermark tool panel (v1.3 Feature 12) ----------------------------
+   Active-state convention: position chips and type chips use bg + border +
+   font-weight changes (NOT color alone) so the active selection reads
+   clearly for colorblind users. Matches the .target-size-*-chip pattern.
+   The cursor hooks below (.watermark-hover / .watermark-dragging) are
+   toggled by the tool module on the overlay canvas, so the user gets a
+   `move` cursor when hovering over the rendered watermark and a `grabbing`
+   cursor mid-drag. */
+.watermark-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+.watermark-tip {
+  margin: 0;
+  font-size: var(--t-xs);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+.watermark-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: var(--t-sm);
+}
+.watermark-row[hidden] { display: none; }
+.watermark-row > span:first-child {
+  min-width: 5.5rem;
+  color: var(--text-secondary);
+}
+.watermark-enable-row {
+  font-size: var(--t-sm);
+  color: var(--text);
+}
+.watermark-sub {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  transition: opacity 120ms ease;
+}
+.watermark-sub.is-disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+.watermark-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-sm) 0 0;
+  border-top: 1px solid var(--border);
+}
+.watermark-section[hidden] { display: none; }
+.watermark-type-group {
+  display: flex;
+  gap: var(--space-xs);
+}
+.watermark-type-chip {
+  flex: 1;
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-sm);
+  font-weight: 500;
+  cursor: pointer;
+}
+.watermark-type-chip:hover { background: var(--surface-2); }
+.watermark-type-chip.is-active {
+  background: var(--surface-2);
+  border-color: var(--accent);
+  border-width: 2px;
+  font-weight: 700;
+  padding: calc(var(--space-xs) - 1px) calc(var(--space-sm) - 1px);
+}
+.watermark-text-input,
+.watermark-file-input {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-xxs) var(--space-xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-sm);
+}
+.watermark-text-color {
+  width: 2.5rem;
+  height: 1.75rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  cursor: pointer;
+}
+.watermark-file-row { align-items: stretch; }
+.watermark-logo-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 4rem;
+  padding: var(--space-sm);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-control);
+  background:
+    repeating-conic-gradient(var(--surface) 0% 25%, var(--surface-2) 0% 50%)
+    50% / 16px 16px;
+  color: var(--text-muted);
+  font-size: var(--t-xs);
+}
+.watermark-logo-img {
+  max-width: 100%;
+  max-height: 5rem;
+  object-fit: contain;
+}
+.watermark-logo-img[hidden] { display: none; }
+.watermark-logo-empty[hidden] { display: none; }
+.watermark-logo-clear {
+  align-self: flex-start;
+  background: none;
+  border: 1px solid var(--border);
+  padding: var(--space-xxs) var(--space-xs);
+  border-radius: var(--radius-control);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-xs);
+  cursor: pointer;
+}
+.watermark-logo-clear:hover { background: var(--surface-2); }
+.watermark-position-label {
+  font-weight: 600;
+  color: var(--text);
+}
+.watermark-position-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-xs);
+}
+.watermark-position-chip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1.6;
+  min-height: 2rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--t-md);
+  font-weight: 500;
+  cursor: pointer;
+}
+.watermark-position-chip:hover { background: var(--surface-2); }
+.watermark-position-chip.is-active {
+  background: var(--surface-2);
+  border-color: var(--accent);
+  border-width: 2px;
+  font-weight: 700;
+  color: var(--text);
+}
+.watermark-tiled-row {
+  margin-top: var(--space-xs);
+}
+.watermark-position-tiled {
+  width: 100%;
+  aspect-ratio: auto;
+  padding: var(--space-xs) var(--space-sm);
+  font-size: var(--t-sm);
+}
+.watermark-drag-hint {
+  margin: 0;
+  font-size: var(--t-xs);
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+.watermark-slider-row > input[type="range"] {
+  flex: 1;
+  min-width: 0;
+}
+.watermark-readout {
+  min-width: 2.75rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  font-size: var(--t-xs);
+}
+
+/* Drag affordance on the overlay canvas. Hover sets `move`; mid-drag the
+   tool adds .watermark-dragging which overrides to `grabbing`. Specificity
+   matters because the canvas may have other cursor classes applied. */
+#overlay-canvas.watermark-hover { cursor: move; }
+#overlay-canvas.watermark-dragging { cursor: grabbing; }

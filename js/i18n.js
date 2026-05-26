@@ -104,6 +104,7 @@ export const TRANSLATIONS = {
     batchRedactDoneFaces:     'Found {faces} face(s) across {images} image(s) — added redacts to each.',
     batchRedactDoneText:      'Found {lines} text region(s) across {images} image(s) — added redacts to each.',
     batchSectionExport:       'Export',
+    batchSectionWatermark:    'Watermark',
     batchResizeApply:         'Apply resize to all',
     batchAdjustApply:         'Apply adjust to all',
     batchChromaApply:         'Apply chromakey to all',
@@ -176,6 +177,10 @@ export const TRANSLATIONS = {
     editorToolBrush:          'Brush',
     editorToolShape:          'Shape',
     editorToolRedact:         'Redact',
+    editorToolTransparentPng: 'Transparent PNG',
+    editorToolTransparentPngTip: 'Pad the canvas, replace transparency with a color, or toggle a checkerboard preview',
+    editorToolWatermark: 'Watermark',
+    editorToolWatermarkTip: 'Add a text or image watermark — baked into export',
     editorToolEyedropper:     'Eyedropper',
     editorToolSelectTip:      'Click an item on your picture to select and edit it',
     compareToggle:            'Compare with original',
@@ -260,6 +265,70 @@ export const TRANSLATIONS = {
     batchToastTrimmed:        'Trimmed {count} images.',
     batchToastTrimSkipped:    'Trim found nothing to remove on {count} images.',
 
+    // --- Transparent PNG tools (v1.3 Feature 16) --------------------------
+    // Three tools in one panel: pad the canvas, replace transparent pixels
+    // with a chosen color, and a checkerboard preview backdrop so the user
+    // can SEE transparency against a non-white background. Per-image only
+    // in v1; batch flavor is a future extension.
+    transparentPngTitle:                  'Transparent PNG',
+    transparentPngPadHeading:             'Pad canvas',
+    transparentPngPadHelp:                'Add empty margin around the image. The new area is transparent unless a color is set.',
+    transparentPngPadTop:                 'Top',
+    transparentPngPadRight:               'Right',
+    transparentPngPadBottom:              'Bottom',
+    transparentPngPadLeft:                'Left',
+    transparentPngPadAllSides:            'All sides',
+    transparentPngPadAllSidesAria:        'Copy the Top value to all four sides',
+    transparentPngPadColor:               'Background',
+    transparentPngPadColorTransparent:    'Transparent',
+    transparentPngPadApply:               'Apply padding',
+    transparentPngPadEmpty:               'Set at least one margin > 0 before applying.',
+    transparentPngReplaceHeading:         'Replace transparency',
+    transparentPngReplaceHelp:            'Turn every pixel below the alpha threshold into a solid color. Useful when an export needs a background instead of transparency.',
+    transparentPngReplaceColor:           'Color',
+    transparentPngReplaceThreshold:       'Alpha threshold (%)',
+    transparentPngReplaceThresholdAria:   'Alpha threshold percent — pixels below this become the chosen color',
+    transparentPngReplaceApply:           'Apply color fill',
+    transparentPngReplaceNoAlpha:         'This image has no transparency to replace.',
+    transparentPngCheckerboard:           'Show checkerboard background',
+    transparentPngCheckerboardAria:       'Toggle a checkerboard pattern behind the canvas to make transparency visible',
+    transparentPngApplied:                'Applied — image is now {w} × {h} px.',
+    transparentPngApplyFailed:            'Could not apply this change. Try a smaller image or check the console.',
+
+    // --- Watermark preset (v1.3 Feature 12) -------------------------------
+    // Text or image watermark with 9-point grid positioning, tiled-diagonal,
+    // and drag-to-position. Global setting (state.ui.watermark), baked into
+    // export. Logo image persists across reloads as base64 in localStorage.
+    watermarkTitle:                       'Watermark',
+    watermarkTip:                         'Add a text or image watermark to exports',
+    watermarkEnable:                      'Enable watermark',
+    watermarkType:                        'Type',
+    watermarkTypeText:                    'Text',
+    watermarkTypeImage:                   'Image',
+    watermarkText:                        'Text',
+    watermarkColor:                       'Color',
+    watermarkLogo:                        'Logo',
+    watermarkLogoUpload:                  'Upload logo (PNG with transparency)',
+    watermarkLogoClear:                   'Clear logo',
+    watermarkLogoNone:                    'No logo selected',
+    watermarkPosition:                    'Position',
+    watermarkPositionDragHint:            'Or drag the watermark in the preview to set a custom position',
+    watermarkPositionTopLeft:             'Top-left',
+    watermarkPositionTop:                 'Top',
+    watermarkPositionTopRight:            'Top-right',
+    watermarkPositionLeft:                'Left',
+    watermarkPositionCenter:              'Center',
+    watermarkPositionRight:               'Right',
+    watermarkPositionBottomLeft:          'Bottom-left',
+    watermarkPositionBottom:              'Bottom',
+    watermarkPositionBottomRight:         'Bottom-right',
+    watermarkPositionTiled:               'Tiled',
+    watermarkPositionCustom:              'Custom',
+    watermarkOpacity:                     'Opacity',
+    watermarkScale:                       'Scale',
+    watermarkTiledAngle:                  'Tiled angle',
+    watermarkSaved:                       'Watermark settings saved',
+
     // --- Adjust panel -----------------------------------------------------
     adjustBrightness:         'Brightness',
     adjustContrast:           'Contrast',
@@ -300,6 +369,11 @@ export const TRANSLATIONS = {
     exportFormatWebp:         'WebP',
     exportFormatPdf:          'PDF',
     exportFormatPdfAria:      'Export as PDF',
+    // Shown below the format chips whenever PNG is the selected format —
+    // a passive, non-dismissible nudge toward WebP (smaller AND supports
+    // transparency). The hint is EN-only on purpose; this is a discovery
+    // affordance, not a primary UI string.
+    exportFormatPngWebpHint:  'Tip: WebP is ~30% smaller than PNG at equivalent quality and also supports transparency.',
     exportPredictedSize:      'Predicted size: {size}',
     exportPredictedSizeBatch: '{count} images · est. {size} output',
     exportPredictedEstimating: 'Predicted size: estimating…',
@@ -562,11 +636,23 @@ export const TRANSLATIONS = {
     heicLoading:              'Decoding HEIC — "{name}"…',
     heicDecodeFailed:         'Could not decode {filename} (HEIC). Try saving it as JPEG and importing that instead.',
     heicLoaderFailed:         'HEIC decoder failed to load. Refresh and try again, or convert the file to JPEG first.',
+    heicPoolImporting:        'Importing {done}/{total} HEIC files…',
+    heicBatchFailedSingle:    'Could not import {name}: {reason}',
+    heicBatchFailedSummary:   'Could not import {failed} of {total} HEIC files: {names}',
+    heicBatchFailedSummaryMany: 'Could not import {failed} of {total} HEIC files (see console for filenames)',
 
     // --- Toast messages ---------------------------------------------------
     toastDismiss:             'Dismiss',
     toastWebpUnsupported:     'WebP not supported on this browser — falling back to PNG for batch.',
     toastBootFailed:          'Failed to start the editor.',
+
+    // --- Share target (Feature #14, Android PWA) --------------------------
+    // Fired by js/shareTarget.js after the system share sheet hands files
+    // off to the installed PWA. iOS Safari doesn't implement the API yet —
+    // the "unsupported" message is the honest fallback for that case.
+    shareTargetReceived:      'Imported {count} shared image(s)',
+    shareTargetFailed:        'Could not import shared images',
+    shareTargetUnsupported:   'Sharing to NoAdsPhotos requires Android Chrome with the PWA installed. iOS: paste or drag instead.',
 
     // --- Settings popover (Phase 12B) -------------------------------------
     // Theme labels (auto / light / dark), option lists, control labels, plus
@@ -642,6 +728,41 @@ export const TRANSLATIONS = {
     exportTooLarge:           'Output image too large for this device. Use a smaller resize.',
     exportSourceMissing:      'Source image unavailable. Re-import and try again.',
     exportGenericFailed:      'Export failed. See console for details.',
+
+    // --- Target file size (v1.3 Feature 11) -------------------------------
+    targetSizeTitle:          'Target file size',
+    targetSizeModePreset:     'Preset',
+    targetSizeModeCustom:     'Custom',
+    targetSizePresetDiscord10: 'Discord 10 MB',
+    targetSizePresetDiscord25: 'Discord 25 MB',
+    targetSizePresetEmail25:  'Email 25 MB',
+    targetSizePresetIrs1:     'IRS 1 MB',
+    targetSizePresetReddit20: 'Reddit 20 MB',
+    targetSizeCustomLabel:    'Size',
+    targetSizeAutoResize:     'Auto-resize if needed',
+    targetSizeFormatLabel:    'Format',
+    targetSizeApply:          'Export at target size',
+    targetSizeApplyBatch:     'Export all at target size',
+    targetSizeWorking:        'Bisecting quality…',
+    targetSizeSuccess:        'Exported {filename} at {size} ({quality} quality)',
+    targetSizeUnreachable:    'Could not fit under target — exported best attempt at {size}',
+    targetSizeBatchSuccess:   'Exported {done}/{total} files at target size',
+    targetSizeInvalidCustom:  'Enter a positive number',
+
+    // --- Upload-ready preset (v1.3 Feature 9) -----------------------------
+    uploadReadyTitle:         'Upload-ready preset',
+    uploadReadyLongEdge:      'Long edge (px)',
+    uploadReadyFormat:        'Format',
+    uploadReadyQuality:       'Quality',
+    uploadReadyStripExif:     'Strip EXIF (recommended)',
+    uploadReadyFilename:      'Filename',
+    uploadReadyFilenameHint:  'Tokens: {base} {date} {n} {ext}',
+    uploadReadyApply:         'Apply preset & download',
+    uploadReadyApplyBatch:    'Apply to all & download ZIP',
+    uploadReadyWorking:       'Preparing {done}/{total} for upload…',
+    uploadReadySuccess:       'Downloaded {filename} ({size})',
+    uploadReadyBatchSuccess:  'Downloaded ZIP with {count} files ({size})',
+    uploadReadyFailed:        'Could not apply preset: {reason}',
   },
 
   // The other languages are intentionally empty for v1 — missing keys fall

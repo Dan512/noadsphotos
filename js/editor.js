@@ -12,7 +12,7 @@
 //   - setToolPanel() / clearToolPanel() let tool modules (cropTool, selectTool,
 //     …) own the Tool options section without each one re-touching DOM
 //     bookkeeping.
-import { getState, subscribe, update } from './state.js';
+import { getState, subscribe, update, persistTargetSize, persistUploadReady } from './state.js';
 import { applyResize } from './ops/transforms.js';
 import { applyAdjust, applyFilterPreset, resetAllAdjust, ADJUST_RANGES } from './ops/adjust.js';
 import { computeTrimBake, applyTrimBakeToState } from './ops/trim.js';
@@ -28,11 +28,16 @@ import {
 import {
   exportSingle,
   exportSinglePdf,
+  exportToTargetSize,
+  applyUploadReadyPreset,
   pickSmallestFormat,
   formatBytes,
   setPredictCache,
   getExportContext,
+  watermarkCacheKey,
 } from './exporter.js';
+import { TARGET_SIZE_PRESETS, getActiveTargetBytes } from './targetSizePresets.js';
+import { getSmartDefaultFormat } from './ops/formatSmart.js';
 import { renderForExport } from './render/exportRenderer.js';
 import { showToast } from './errors.js';
 import { hasMetadata } from './exif.js';
@@ -56,6 +61,8 @@ const TOOLS = [
   { id: 'brush',      icon: '✎', i18n: 'editorToolBrush' },
   { id: 'shape',      icon: '◯', i18n: 'editorToolShape' },
   { id: 'redact',     icon: '▦', i18n: 'editorToolRedact' },
+  { id: 'transparent-png', icon: '◧', i18n: 'editorToolTransparentPng', tipKey: 'editorToolTransparentPngTip' },
+  { id: 'watermark',  icon: '©', i18n: 'editorToolWatermark',  tipKey: 'editorToolWatermarkTip' },
   { id: 'eyedropper', icon: '⌖', i18n: 'editorToolEyedropper', tipKey: 'editorToolEyedropperTip' },
   { id: 'bg-remove',  icon: '✄', i18n: 'editorToolBgRemove' },
 ];
@@ -1494,6 +1501,14 @@ let lastPredictKey = null;
 let smallestInFlight = false;
 const PREDICT_DEBOUNCE_MS = 300;
 
+// Track the active image we last applied the smart match-source default
+// to. When the user switches to a different image AND hasn't explicitly
+// locked a format chip this session, we recompute the smart default from
+// the new image's source MIME so a PNG-imported picture gets PNG output
+// while the JPEG sitting next to it gets JPEG. Sentinel undefined so the
+// very first sync also fires (state.activeImageId starts at null).
+let lastSmartFormatForId;
+
 function buildExportPanel() {
   if (!exportPanelBody) return;
 
@@ -1520,6 +1535,18 @@ function buildExportPanel() {
     formatBtns.set(fmt.id, btn);
   }
   root.appendChild(formatRow);
+
+  // --- WebP-over-PNG nudge ---
+  // Appears only when PNG is the active format. Passive hint (no dismiss
+  // button) — users who don't care can ignore it; the discovery moment is
+  // when they're staring at the export panel anyway. Sits directly under
+  // the chip row so the connection between "PNG" and "consider WebP" is
+  // visually obvious.
+  const formatHint = document.createElement('p');
+  formatHint.className = 'export-format-hint';
+  formatHint.textContent = t('exportFormatPngWebpHint');
+  formatHint.hidden = true;
+  root.appendChild(formatHint);
 
   // --- "Smallest size" preset button ---
   // Sits directly under the format chips so it reads as part of the same
@@ -1744,19 +1771,628 @@ function buildExportPanel() {
   stripHint.hidden = true;
   root.appendChild(stripHint);
 
+  // --- Target file size subsection (v1.3 Feature 11) --------------------
+  // Collapsible <details> so the bisection UI doesn't crowd the panel for
+  // users who only want the standard quality slider. State lives at
+  // state.ui.targetSize and persists to localStorage on every change.
+  const targetSizeEls = buildTargetSizeSection({
+    apply: onApplyTargetSize,
+    applyLabel: t('targetSizeApply'),
+    rowClass: 'target-size-row',
+    sectionClass: 'editor-target-size-section',
+  });
+  root.appendChild(targetSizeEls.section);
+
+  // --- Upload-ready preset subsection (v1.3 Feature 9) ------------------
+  // Same collapsible pattern as the target-size section. One-click "resize
+  // + compress + strip EXIF + rename" for the common social/web prep flow.
+  const uploadReadyEls = buildUploadReadySection({
+    apply: onApplyUploadReady,
+    applyLabel: t('uploadReadyApply'),
+    sectionClass: 'editor-upload-ready-section',
+  });
+  root.appendChild(uploadReadyEls.section);
+
   exportPanelBody.replaceChildren(root);
   exportEls = {
-    root, formatBtns, smallestBtn, qualityRow, qualityInput, qualityReadout,
+    root, formatBtns, formatHint, smallestBtn, qualityRow, qualityInput, qualityReadout,
     filenameInput, filenameHelp, dimsReadout, predictedReadout, downloadBtn,
     stripRow, stripInput, stripLabel, stripHint,
     // PDF options
     pdfOptsRow, pdfPageSizeSel, pdfOrientSel, pdfMarginInput, pdfFitSel, pdfFitLabel,
+    // Target file size (Feature 11)
+    targetSize: targetSizeEls,
+    // Upload-ready preset (Feature 9)
+    uploadReady: uploadReadyEls,
   };
   syncExportPanel();
 }
 
+// --------------------------------------------------------------------------
+// Target file size (Feature 11) — UI builder shared by the editor's export
+// panel and the queue's batch panel. Same DOM shape both places: a section
+// with mode chips, a preset chip row OR a custom number+unit row, an
+// auto-resize checkbox, a format toggle, and an apply button.
+//
+// `apply` is the click handler for the Apply button. `applyLabelKey` lets
+// the caller swap the singular/batch labels. `rowClass` is the CSS hook
+// for layout (kept identical across both panels so style.css owns it).
+//
+// Returns an object holding the section root + every input ref so the
+// caller can drive sync from state via `syncTargetSizeSection(els)`.
+// --------------------------------------------------------------------------
+
+export function buildTargetSizeSection({ apply, applyLabel, rowClass, sectionClass }) {
+  const section = document.createElement('details');
+  section.className = `target-size-section ${sectionClass}`;
+  section.open = false;
+  const summary = document.createElement('summary');
+  summary.textContent = t('targetSizeTitle');
+  section.appendChild(summary);
+
+  const body = document.createElement('div');
+  body.className = 'target-size-body';
+  section.appendChild(body);
+
+  // Mode chips (Preset / Custom). Two-button radio group with
+  // pressed + bold + underline styling so the active state isn't color-only.
+  const modeRow = document.createElement('div');
+  modeRow.className = 'target-size-mode-chips';
+  modeRow.setAttribute('role', 'group');
+  modeRow.setAttribute('aria-label', t('targetSizeTitle'));
+  const presetModeBtn = makeChip(t('targetSizeModePreset'), 'target-size-mode-chip target-size-mode-preset');
+  const customModeBtn = makeChip(t('targetSizeModeCustom'), 'target-size-mode-chip target-size-mode-custom');
+  presetModeBtn.addEventListener('click', () => setTargetSize({ mode: 'preset' }));
+  customModeBtn.addEventListener('click', () => setTargetSize({ mode: 'custom' }));
+  modeRow.append(presetModeBtn, customModeBtn);
+  body.appendChild(modeRow);
+
+  // Preset chip row — populated from TARGET_SIZE_PRESETS.
+  const presetRow = document.createElement('div');
+  presetRow.className = `target-size-preset-chips ${rowClass}`;
+  const presetBtns = new Map();
+  for (const preset of TARGET_SIZE_PRESETS) {
+    const btn = makeChip(t(preset.labelKey), 'target-size-preset-chip');
+    btn.dataset.presetId = preset.id;
+    btn.addEventListener('click', () => setTargetSize({ mode: 'preset', presetId: preset.id }));
+    presetRow.appendChild(btn);
+    presetBtns.set(preset.id, btn);
+  }
+  body.appendChild(presetRow);
+
+  // Custom value + unit row.
+  const customRow = document.createElement('div');
+  customRow.className = `target-size-custom-row ${rowClass}`;
+  const customLbl = document.createElement('span');
+  customLbl.className = 'target-size-custom-label';
+  customLbl.textContent = t('targetSizeCustomLabel');
+  customRow.appendChild(customLbl);
+  const customInput = document.createElement('input');
+  customInput.type = 'number';
+  customInput.min = '0.1';
+  customInput.step = '0.1';
+  customInput.className = 'target-size-custom-input';
+  customInput.setAttribute('aria-label', t('targetSizeCustomLabel'));
+  customRow.appendChild(customInput);
+  const unitToggle = document.createElement('div');
+  unitToggle.className = 'target-size-unit-toggle';
+  unitToggle.setAttribute('role', 'group');
+  const mbBtn = makeChip('MB', 'target-size-unit-chip target-size-unit-mb');
+  const kbBtn = makeChip('KB', 'target-size-unit-chip target-size-unit-kb');
+  mbBtn.addEventListener('click', () => setTargetSize({ customUnit: 'MB' }));
+  kbBtn.addEventListener('click', () => setTargetSize({ customUnit: 'KB' }));
+  unitToggle.append(mbBtn, kbBtn);
+  customRow.appendChild(unitToggle);
+
+  // Inline validation hint — shown only in custom mode when the typed value
+  // doesn't resolve to a positive number. Sits beneath the input so it
+  // doesn't shift layout when it appears.
+  const customHint = document.createElement('p');
+  customHint.className = 'target-size-custom-hint';
+  customHint.textContent = t('targetSizeInvalidCustom');
+  customHint.hidden = true;
+  body.appendChild(customHint);
+
+  customInput.addEventListener('input', () => {
+    const num = Number(customInput.value);
+    // Allow the field to be temporarily empty during typing — don't clobber
+    // state with NaN. The apply button stays disabled until value > 0.
+    if (Number.isFinite(num) && num > 0) {
+      setTargetSize({ customValue: num });
+    } else {
+      // Still call setTargetSize so the apply button gets re-disabled.
+      setTargetSize({ customValue: 0 });
+    }
+  });
+  body.appendChild(customRow);
+
+  // Auto-resize checkbox. Default ON.
+  const autoRow = document.createElement('label');
+  autoRow.className = 'target-size-auto-row';
+  const autoInput = document.createElement('input');
+  autoInput.type = 'checkbox';
+  autoInput.className = 'target-size-auto';
+  autoInput.addEventListener('change', () => {
+    setTargetSize({ autoResize: !!autoInput.checked });
+  });
+  autoRow.appendChild(autoInput);
+  const autoLbl = document.createElement('span');
+  autoLbl.textContent = t('targetSizeAutoResize');
+  autoRow.appendChild(autoLbl);
+  body.appendChild(autoRow);
+
+  // Format toggle (JPEG / WebP). PNG is excluded because the bisector has
+  // no quality knob on a lossless format.
+  const formatRow = document.createElement('div');
+  formatRow.className = `target-size-format-row ${rowClass}`;
+  const formatLbl = document.createElement('span');
+  formatLbl.className = 'target-size-format-label';
+  formatLbl.textContent = t('targetSizeFormatLabel');
+  formatRow.appendChild(formatLbl);
+  const formatGroup = document.createElement('div');
+  formatGroup.className = 'target-size-format-group';
+  formatGroup.setAttribute('role', 'group');
+  const jpegBtn = makeChip('JPEG', 'target-size-format-chip target-size-format-jpeg');
+  const webpBtn = makeChip('WebP', 'target-size-format-chip target-size-format-webp');
+  jpegBtn.addEventListener('click', () => setTargetSize({ format: 'jpeg' }));
+  webpBtn.addEventListener('click', () => setTargetSize({ format: 'webp' }));
+  formatGroup.append(jpegBtn, webpBtn);
+  formatRow.appendChild(formatGroup);
+  body.appendChild(formatRow);
+
+  // Apply button. Disabled until a valid byte target resolves AND (in the
+  // editor case) there's an active image — sync below handles the disabled
+  // state on every state change.
+  const applyBtn = document.createElement('button');
+  applyBtn.type = 'button';
+  applyBtn.className = 'target-size-apply';
+  applyBtn.textContent = applyLabel;
+  applyBtn.addEventListener('click', () => {
+    apply(applyBtn);
+  });
+  body.appendChild(applyBtn);
+
+  return {
+    section, body,
+    presetModeBtn, customModeBtn,
+    presetRow, presetBtns,
+    customRow, customInput, customHint, mbBtn, kbBtn,
+    autoInput,
+    jpegBtn, webpBtn,
+    applyBtn,
+  };
+}
+
+function makeChip(label, cls) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = cls;
+  b.textContent = label;
+  return b;
+}
+
+// Centralized mutator + persist. Every input handler in the target-size
+// section funnels through here so we have ONE place that bumps state and
+// writes localStorage.
+function setTargetSize(patch) {
+  update(s => {
+    if (!s.ui.targetSize) s.ui.targetSize = {};
+    Object.assign(s.ui.targetSize, patch);
+    // If the user typed into the custom field, snap mode to 'custom' so the
+    // resolver picks it up. Same with picking a preset chip → mode 'preset'.
+    if (Object.prototype.hasOwnProperty.call(patch, 'customValue')
+        || Object.prototype.hasOwnProperty.call(patch, 'customUnit')) {
+      s.ui.targetSize.mode = 'custom';
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'presetId')) {
+      s.ui.targetSize.mode = 'preset';
+    }
+  });
+  persistTargetSize();
+}
+
+/**
+ * Apply the current state.ui.targetSize to the given UI bundle (the object
+ * returned by buildTargetSizeSection). Drives chip active states, custom
+ * row visibility, the autoResize/format inputs, and the Apply button's
+ * disabled state.
+ *
+ * Pass `applyEnabledExtra` to AND-gate the Apply button against additional
+ * UI-specific conditions (e.g. "active image exists" in the editor).
+ */
+export function syncTargetSizeSection(els, applyEnabledExtra = true) {
+  if (!els) return;
+  const ts = getState().ui.targetSize || {};
+  const mode = ts.mode === 'custom' ? 'custom' : 'preset';
+
+  // Mode chips
+  setChipActive(els.presetModeBtn, mode === 'preset');
+  setChipActive(els.customModeBtn, mode === 'custom');
+
+  // Preset chips visible only in preset mode.
+  els.presetRow.hidden = mode !== 'preset';
+  for (const [id, btn] of els.presetBtns) {
+    setChipActive(btn, mode === 'preset' && id === ts.presetId);
+  }
+
+  // Custom row visible only in custom mode.
+  els.customRow.hidden = mode !== 'custom';
+  if (mode === 'custom' && document.activeElement !== els.customInput) {
+    const v = Number(ts.customValue);
+    els.customInput.value = Number.isFinite(v) && v > 0 ? String(v) : '';
+  }
+  setChipActive(els.mbBtn, ts.customUnit !== 'KB');
+  setChipActive(els.kbBtn, ts.customUnit === 'KB');
+  // Inline hint visible when custom mode is selected AND the typed value
+  // doesn't resolve to a positive number. We re-use the resolver below.
+  if (els.customHint) {
+    const cvNum = Number(ts.customValue);
+    const cvBad = !Number.isFinite(cvNum) || cvNum <= 0;
+    els.customHint.hidden = !(mode === 'custom' && cvBad);
+  }
+
+  // Auto-resize checkbox — default ON if unset.
+  if (document.activeElement !== els.autoInput) {
+    els.autoInput.checked = ts.autoResize !== false;
+  }
+
+  // Format chips
+  setChipActive(els.jpegBtn, ts.format !== 'webp');
+  setChipActive(els.webpBtn, ts.format === 'webp');
+
+  // Apply button enabled iff a valid target resolves AND any extra gate
+  // (e.g. activeImage) is true.
+  const bytes = getActiveTargetBytes(ts);
+  els.applyBtn.disabled = !(bytes && bytes > 0 && applyEnabledExtra);
+}
+
+// Chip active state uses BOTH a class and aria-pressed. The CSS pairs the
+// active class with a stronger border + inset shadow so the cue isn't
+// color-only (Dan is colorblind — see CLAUDE.md).
+function setChipActive(btn, active) {
+  if (!btn) return;
+  btn.classList.toggle('is-active', !!active);
+  btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+}
+
+// Editor-side handler for the Apply button. Wraps exportToTargetSize with
+// a sticky "Bisecting…" toast and translates the result into a success or
+// "couldn't fit" toast. The exporter triggers the actual file download.
+async function onApplyTargetSize(applyBtn) {
+  const img = getActiveImage();
+  if (!img) return;
+  const ts = getState().ui.targetSize || {};
+  const targetBytes = getActiveTargetBytes(ts);
+  if (!targetBytes) return;
+
+  const ctx = getExportContext();
+  if (!ctx.lifecycle || !ctx.caps) {
+    showToast(t('exportNotReady'), { variant: 'error' });
+    return;
+  }
+
+  // Disable the button + sticky progress toast for the (potentially
+  // multi-second) bisection. We track inFlight via the button's disabled
+  // state — exportToTargetSize is fully async-safe to invoke once at a time
+  // per image, but double-firing produces duplicate downloads.
+  applyBtn.disabled = true;
+  const dismissProgress = showToast(t('targetSizeWorking'), { variant: 'info', duration: 0 });
+
+  let result;
+  try {
+    result = await exportToTargetSize(img.id, {
+      targetBytes,
+      autoResize: ts.autoResize !== false,
+      format: ts.format === 'webp' ? 'webp' : 'jpeg',
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('onApplyTargetSize:', err);
+    dismissProgress();
+    showToast(t('exportGenericFailed'), { variant: 'error' });
+    applyBtn.disabled = false;
+    return;
+  }
+  dismissProgress();
+
+  if (!result || !result.blob) {
+    showToast(t('exportGenericFailed'), { variant: 'error' });
+  } else if (result.fits) {
+    showToast(t('targetSizeSuccess', {
+      filename: result.filename,
+      size: formatBytes(result.blob.size),
+      quality: result.quality.toFixed(2),
+    }), { variant: 'info' });
+  } else {
+    showToast(t('targetSizeUnreachable', { size: formatBytes(result.blob.size) }), { variant: 'warn' });
+  }
+  applyBtn.disabled = false;
+}
+
+// --------------------------------------------------------------------------
+// Upload-ready preset (v1.3 Feature 9) — UI builder shared by the editor's
+// export panel and the queue's batch panel. Same shape both places: a
+// collapsible section with longEdge / format / quality / stripExif /
+// filename inputs + an apply button.
+//
+// State lives at state.ui.uploadReady. Every mutation funnels through
+// setUploadReady() which calls persistUploadReady() so the user's last-used
+// config restores across reloads.
+//
+// Apply button label differs (singular vs. batch) and the click handler is
+// caller-supplied so the editor wires to per-image download and the queue
+// wires to ZIP build.
+// --------------------------------------------------------------------------
+export function buildUploadReadySection({ apply, applyLabel, sectionClass }) {
+  const section = document.createElement('details');
+  section.className = `upload-ready-section ${sectionClass || ''}`.trim();
+  section.open = false;
+  const summary = document.createElement('summary');
+  summary.textContent = t('uploadReadyTitle');
+  section.appendChild(summary);
+
+  const body = document.createElement('div');
+  body.className = 'upload-ready-body';
+  section.appendChild(body);
+
+  // Long-edge input.
+  const longEdgeRow = document.createElement('label');
+  longEdgeRow.className = 'upload-ready-row upload-ready-longedge-row';
+  const longEdgeLbl = document.createElement('span');
+  longEdgeLbl.className = 'upload-ready-label';
+  longEdgeLbl.textContent = t('uploadReadyLongEdge');
+  longEdgeRow.appendChild(longEdgeLbl);
+  const longEdgeInput = document.createElement('input');
+  longEdgeInput.type = 'number';
+  longEdgeInput.className = 'upload-ready-longedge';
+  longEdgeInput.min = '64';
+  longEdgeInput.max = '16384';
+  longEdgeInput.step = '1';
+  longEdgeInput.setAttribute('aria-label', t('uploadReadyLongEdge'));
+  longEdgeRow.appendChild(longEdgeInput);
+  longEdgeInput.addEventListener('input', () => {
+    const v = Number(longEdgeInput.value);
+    if (Number.isFinite(v) && v >= 64 && v <= 16384) {
+      setUploadReady({ longEdge: Math.round(v) });
+    }
+  });
+  body.appendChild(longEdgeRow);
+
+  // Format chips (JPEG / WebP / PNG).
+  const formatRow = document.createElement('div');
+  formatRow.className = 'upload-ready-row upload-ready-format-row';
+  const formatLbl = document.createElement('span');
+  formatLbl.className = 'upload-ready-label';
+  formatLbl.textContent = t('uploadReadyFormat');
+  formatRow.appendChild(formatLbl);
+  const formatGroup = document.createElement('div');
+  formatGroup.className = 'upload-ready-format-group';
+  formatGroup.setAttribute('role', 'group');
+  const jpegBtn = makeUploadChip('JPEG', 'upload-ready-format-chip upload-ready-format-jpeg');
+  const webpBtn = makeUploadChip('WebP', 'upload-ready-format-chip upload-ready-format-webp');
+  const pngBtn = makeUploadChip('PNG', 'upload-ready-format-chip upload-ready-format-png');
+  jpegBtn.addEventListener('click', () => setUploadReady({ format: 'jpeg' }));
+  webpBtn.addEventListener('click', () => setUploadReady({ format: 'webp' }));
+  pngBtn.addEventListener('click', () => setUploadReady({ format: 'png' }));
+  formatGroup.append(jpegBtn, webpBtn, pngBtn);
+  formatRow.appendChild(formatGroup);
+  body.appendChild(formatRow);
+
+  // Quality slider (hidden for PNG — lossless).
+  const qualityRow = document.createElement('label');
+  qualityRow.className = 'upload-ready-row upload-ready-quality-row';
+  const qualityLbl = document.createElement('span');
+  qualityLbl.className = 'upload-ready-label';
+  qualityLbl.textContent = t('uploadReadyQuality');
+  qualityRow.appendChild(qualityLbl);
+  const qualityInput = document.createElement('input');
+  qualityInput.type = 'range';
+  qualityInput.className = 'upload-ready-quality';
+  qualityInput.min = '0.20';
+  qualityInput.max = '1.00';
+  qualityInput.step = '0.01';
+  qualityInput.setAttribute('aria-label', t('uploadReadyQuality'));
+  qualityRow.appendChild(qualityInput);
+  const qualityReadout = document.createElement('span');
+  qualityReadout.className = 'upload-ready-quality-readout';
+  qualityReadout.setAttribute('aria-live', 'polite');
+  qualityRow.appendChild(qualityReadout);
+  qualityInput.addEventListener('input', () => {
+    const v = Number(qualityInput.value);
+    if (Number.isFinite(v) && v >= 0.20 && v <= 1.00) {
+      qualityReadout.textContent = String(Math.round(v * 100));
+      setUploadReady({ quality: v });
+    }
+  });
+  body.appendChild(qualityRow);
+
+  // Strip-EXIF checkbox.
+  const stripRow = document.createElement('label');
+  stripRow.className = 'upload-ready-row upload-ready-strip-row';
+  const stripInput = document.createElement('input');
+  stripInput.type = 'checkbox';
+  stripInput.className = 'upload-ready-strip';
+  stripInput.addEventListener('change', () => {
+    setUploadReady({ stripExif: !!stripInput.checked });
+  });
+  stripRow.appendChild(stripInput);
+  const stripLbl = document.createElement('span');
+  stripLbl.textContent = t('uploadReadyStripExif');
+  stripRow.appendChild(stripLbl);
+  body.appendChild(stripRow);
+
+  // Filename template + tokens hint.
+  const filenameRow = document.createElement('label');
+  filenameRow.className = 'upload-ready-row upload-ready-filename-row';
+  const filenameLbl = document.createElement('span');
+  filenameLbl.className = 'upload-ready-label';
+  filenameLbl.textContent = t('uploadReadyFilename');
+  filenameRow.appendChild(filenameLbl);
+  const filenameInput = document.createElement('input');
+  filenameInput.type = 'text';
+  filenameInput.className = 'upload-ready-filename';
+  filenameInput.spellcheck = false;
+  filenameInput.autocomplete = 'off';
+  filenameInput.setAttribute('aria-label', t('uploadReadyFilename'));
+  // Reuse the same tooltip-style hint so the user can hover the field to
+  // see the supported tokens. The colorblind-friendly cue is the "?" label
+  // appended after the title attr (also a tooltip on hover).
+  filenameInput.setAttribute('title', t('uploadReadyFilenameHint'));
+  filenameRow.appendChild(filenameInput);
+  filenameInput.addEventListener('input', () => {
+    const v = String(filenameInput.value || '');
+    setUploadReady({ filenameTemplate: v.length > 0 ? v : '{base}-edited' });
+  });
+  body.appendChild(filenameRow);
+
+  const filenameHelp = document.createElement('p');
+  filenameHelp.className = 'upload-ready-filename-help';
+  // t() without a vars object skips substitution so the literal {base} etc.
+  // survive — these are template tokens, not i18n variables.
+  filenameHelp.textContent = t('uploadReadyFilenameHint');
+  body.appendChild(filenameHelp);
+
+  // Apply button.
+  const applyBtn = document.createElement('button');
+  applyBtn.type = 'button';
+  applyBtn.className = 'upload-ready-apply';
+  applyBtn.textContent = applyLabel;
+  applyBtn.addEventListener('click', () => apply(applyBtn));
+  body.appendChild(applyBtn);
+
+  return {
+    section, body,
+    longEdgeInput,
+    formatGroup, jpegBtn, webpBtn, pngBtn,
+    qualityRow, qualityInput, qualityReadout,
+    stripInput,
+    filenameInput,
+    applyBtn,
+  };
+}
+
+function makeUploadChip(label, cls) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = cls;
+  b.textContent = label;
+  return b;
+}
+
+// Centralized mutator + persist for the upload-ready slice. Every input
+// handler funnels through here so we have ONE place that bumps state and
+// writes localStorage.
+function setUploadReady(patch) {
+  update(s => {
+    if (!s.ui.uploadReady) s.ui.uploadReady = {};
+    Object.assign(s.ui.uploadReady, patch);
+  });
+  persistUploadReady();
+}
+
+/**
+ * Apply state.ui.uploadReady to the given UI bundle (the object returned by
+ * buildUploadReadySection). Drives chip active states, quality-row visibility,
+ * and the Apply button's disabled state.
+ *
+ * Pass `applyEnabledExtra` to AND-gate the Apply button against UI-specific
+ * conditions (e.g. "active image exists" in the editor, "queue has images"
+ * in the batch panel). Pass false to keep the button disabled (in-flight).
+ */
+export function syncUploadReadySection(els, applyEnabledExtra = true) {
+  if (!els) return;
+  const ur = (getState().ui && getState().ui.uploadReady) || {};
+  const longEdge = Number.isFinite(ur.longEdge) ? ur.longEdge : 1920;
+  const format = (ur.format === 'png' || ur.format === 'webp') ? ur.format : 'jpeg';
+  const quality = Number.isFinite(ur.quality) ? ur.quality : 0.85;
+  const stripExif = ur.stripExif !== false;
+  const filenameTemplate = (typeof ur.filenameTemplate === 'string' && ur.filenameTemplate.length > 0)
+    ? ur.filenameTemplate
+    : '{base}-edited';
+
+  // Long-edge input — don't clobber while user is typing.
+  if (document.activeElement !== els.longEdgeInput) {
+    els.longEdgeInput.value = String(longEdge);
+  }
+  // Format chips.
+  setChipActive(els.jpegBtn, format === 'jpeg');
+  setChipActive(els.webpBtn, format === 'webp');
+  setChipActive(els.pngBtn, format === 'png');
+  // Quality slider — hidden when PNG (lossless).
+  els.qualityRow.hidden = format === 'png';
+  if (format !== 'png' && document.activeElement !== els.qualityInput) {
+    els.qualityInput.value = String(quality);
+    els.qualityReadout.textContent = String(Math.round(quality * 100));
+  }
+  // Strip-EXIF checkbox.
+  if (document.activeElement !== els.stripInput) {
+    els.stripInput.checked = stripExif;
+  }
+  // Filename template — don't clobber while typing.
+  if (document.activeElement !== els.filenameInput) {
+    els.filenameInput.value = filenameTemplate;
+  }
+  // Apply button.
+  els.applyBtn.disabled = !applyEnabledExtra;
+}
+
+// Editor-side handler for "Apply preset & download". Wraps
+// applyUploadReadyPreset with a sticky working toast and translates the
+// result into a success or failure toast.
+async function onApplyUploadReady(applyBtn) {
+  const img = getActiveImage();
+  if (!img) return;
+  const ur = getState().ui.uploadReady || {};
+  const ctx = getExportContext();
+  if (!ctx.lifecycle || !ctx.caps) {
+    showToast(t('exportNotReady'), { variant: 'error' });
+    return;
+  }
+  applyBtn.disabled = true;
+  // Sticky 1/1 progress toast — keeps UX consistent with batch progress
+  // even though there's only one image.
+  const dismiss = showToast(
+    t('uploadReadyWorking', { done: 0, total: 1 }),
+    { variant: 'info', duration: 0 },
+  );
+  let result;
+  try {
+    result = await applyUploadReadyPreset([img.id], {
+      longEdge: ur.longEdge,
+      format: ur.format,
+      quality: ur.quality,
+      stripExif: ur.stripExif !== false,
+      filenameTemplate: ur.filenameTemplate,
+    }, { lifecycle: ctx.lifecycle, caps: ctx.caps });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('onApplyUploadReady:', err);
+    try { dismiss(); } catch { /* ignore */ }
+    showToast(t('uploadReadyFailed', { reason: err && err.message ? err.message : String(err) }), { variant: 'error' });
+    applyBtn.disabled = false;
+    return;
+  }
+  try { dismiss(); } catch { /* ignore */ }
+  if (!result || result.exported === 0) {
+    showToast(t('uploadReadyFailed', { reason: t('exportGenericFailed') }), { variant: 'error' });
+  } else {
+    showToast(t('uploadReadySuccess', {
+      filename: result.downloadedFilename || '',
+      size: formatBytes(result.blobSize || 0),
+    }), { variant: 'info' });
+  }
+  applyBtn.disabled = false;
+}
+
 function onFormatChange(format) {
-  update(s => { s.export.format = format; });
+  // Any explicit chip click locks the user's choice for the rest of the
+  // session — subsequent active-image switches won't override it via the
+  // smart default. The flag is NOT persisted (each new session is a fresh
+  // chance for the smart default to do its thing).
+  update(s => {
+    s.export.format = format;
+    s.export._userFormatLocked = true;
+  });
 }
 
 function onPdfOptChange(key, value) {
@@ -1979,9 +2615,12 @@ async function onSmallestPreset() {
       s.export.quality = result.quality;
     });
     // Cache the winning blob so the next Download click reuses it without
-    // re-encoding. Use the same key shape syncExportPanel writes.
+    // re-encoding. Use the same key shape syncExportPanel writes — including
+    // the global watermark fingerprint so toggling/tweaking the watermark
+    // invalidates the cache (Bug fix v1.2.08).
     const stateSig = stateSignature(getActiveImage());
-    const newKey = `${img.id}::${result.format}::${result.quality}::${stateSig}`;
+    const wmKey = watermarkCacheKey(getState().ui && getState().ui.watermark);
+    const newKey = `${img.id}::${result.format}::${result.quality}::${stateSig}::${wmKey}`;
     setPredictCache(newKey, result.blob);
     lastPredictKey = newKey;
     if (exportEls && exportEls.predictedReadout) {
@@ -2079,7 +2718,8 @@ async function runPredictEncode() {
   const fmt = (s.export && s.export.format) || 'png';
   const q = Number.isFinite(s.export && s.export.quality) ? s.export.quality : 0.92;
   const stateSig = stateSignature(img);
-  const key = `${img.id}::${fmt}::${q}::${stateSig}`;
+  const wmKey = watermarkCacheKey(s.ui && s.ui.watermark);
+  const key = `${img.id}::${fmt}::${q}::${stateSig}::${wmKey}`;
   // If our cache already has this key (e.g., from a prior predict that's
   // still fresh), update the readout from the cached size.
   if (lastPredictKey === key && exportEls && exportEls.predictedReadout) {
@@ -2112,9 +2752,43 @@ async function runPredictEncode() {
 function syncExportPanel() {
   if (!exportEls) return;
   const s = getState();
-  const exp = s.export || { format: 'png', quality: 0.92, filenameTemplate: '{base}-edited' };
+  const exp = s.export || { format: 'jpeg', quality: 0.92, filenameTemplate: '{base}-edited' };
   const pdfOpts = exp.pdf || { pageSize: 'fit', orientation: 'auto', margins: undefined, fitMode: 'contain' };
+
+  // Smart match-source default: when the user hasn't explicitly clicked
+  // a format chip this session, fall back to whatever matches the active
+  // image's source MIME. Re-runs whenever the active image changes so
+  // switching from a PNG to a JPEG mid-session swaps the format chip too.
+  // Once the user picks a chip, _userFormatLocked flips true and this is
+  // skipped for the rest of the session.
+  const activeId = s.ui && s.ui.activeImageId;
+  if (!exp._userFormatLocked && activeId && activeId !== lastSmartFormatForId) {
+    const activeImg = s.images && s.images[activeId];
+    if (activeImg) {
+      const smart = getSmartDefaultFormat(activeImg);
+      if (smart && smart !== exp.format) {
+        update(st => { st.export.format = smart; });
+        // The update() above re-fires syncExportPanel() synchronously via the
+        // subscriber chain — that re-entry will see the new format and the
+        // updated lastSmartFormatForId, so we return early here to avoid
+        // doing duplicate DOM work in this frame.
+        lastSmartFormatForId = activeId;
+        return;
+      }
+      lastSmartFormatForId = activeId;
+    }
+  }
+
   const isPdf = exp.format === 'pdf';
+
+  // Sync the target-size subsection. Apply gated by "active image exists".
+  if (exportEls.targetSize) {
+    syncTargetSizeSection(exportEls.targetSize, !!getActiveImage());
+  }
+  // Sync the upload-ready subsection. Same enable gate (active image).
+  if (exportEls.uploadReady) {
+    syncUploadReadySection(exportEls.uploadReady, !!getActiveImage());
+  }
 
   // Strip-metadata checkbox: sync from state and toggle the hint visibility
   // when the user opts out of stripping. The hint explains the JPEG-only
@@ -2136,6 +2810,11 @@ function syncExportPanel() {
   for (const [id, btn] of exportEls.formatBtns) {
     btn.classList.toggle('is-active', id === exp.format);
     btn.setAttribute('aria-pressed', id === exp.format ? 'true' : 'false');
+  }
+
+  // WebP-over-PNG nudge — visible only when PNG is the active format.
+  if (exportEls.formatHint) {
+    exportEls.formatHint.hidden = exp.format !== 'png';
   }
 
   // Quality slider: visible for JPG/WebP, hidden for PNG (lossless) and PDF
@@ -2215,10 +2894,11 @@ function syncExportPanel() {
   // Trigger a debounced predict encode if the relevant state signature has
   // changed since the last predict. We compute the key here so any state
   // change that affects the rendered output (transforms / adjust / overlays /
-  // masks / format / quality) re-fires the predict.
+  // masks / format / quality / watermark) re-fires the predict.
   const sig = stateSignature(img);
   const q = Number.isFinite(exp.quality) ? exp.quality : 0.92;
-  const key = `${img.id}::${exp.format || 'png'}::${q}::${sig}`;
+  const wmKey = watermarkCacheKey(getState().ui && getState().ui.watermark);
+  const key = `${img.id}::${exp.format || 'png'}::${q}::${sig}::${wmKey}`;
   if (key !== lastPredictKey) {
     schedulePredictEncode();
   }

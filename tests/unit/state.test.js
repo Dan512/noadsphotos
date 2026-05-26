@@ -16,7 +16,8 @@ beforeEach(() => {
   s.ui.zoom = 'fit';
   s.queue.length = 0;
   for (const k of Object.keys(s.images)) delete s.images[k];
-  s.export.format = 'png';
+  s.export.format = 'jpeg';
+  s.export._userFormatLocked = false;
   s.export.quality = 0.92;
   s.export.filenameTemplate = '{base}-edited';
 });
@@ -43,8 +44,12 @@ test('initial shape: images object exists (null-prototype, no inherited methods)
   assert.equal(Object.getPrototypeOf(images), null);
 });
 
-test('initial shape: export.format is "png"', () => {
-  assert.equal(getState().export.format, 'png');
+test('initial shape: export.format is "jpeg" (safe fallback; smart match-source default kicks in after first import)', () => {
+  assert.equal(getState().export.format, 'jpeg');
+});
+
+test('initial shape: export._userFormatLocked is false at session start (smart default can fire)', () => {
+  assert.equal(getState().export._userFormatLocked, false);
 });
 
 test('subscribe + update: subscriber fires with state on update', () => {
